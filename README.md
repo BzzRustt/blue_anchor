@@ -1,36 +1,91 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# ScanMe
 
-## Getting Started
+A personal QR-code web app with two parts:
 
-First, run the development server:
+- **Public profile page** — what strangers see when they scan the QR code on your shirt. Shows your bio, a poll/question, a comment box, and social links.
+- **Admin dashboard** — password-protected page only you can access. Shows scan analytics, poll results, and visitor comments.
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+## Tech Stack
+
+- [Next.js 14](https://nextjs.org/) (App Router)
+- [TypeScript](https://www.typescriptlang.org/)
+- [Tailwind CSS](https://tailwindcss.com/)
+- [Supabase](https://supabase.com/) (Postgres + Auth)
+- [Zod](https://zod.dev/) (API input validation)
+
+## Project Structure
+
+```
+app/              # Pages and API routes (App Router)
+  api/            # Backend API routes
+components/       # Reusable UI components
+lib/
+  supabase/
+    client.ts     # Browser-side Supabase client
+    server.ts     # Server-side Supabase client (API routes + Server Components)
+types/
+  database.ts     # TypeScript interfaces for all Supabase tables
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## Environment Variables
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+Copy `.env.example` to `.env.local` and fill in the values:
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+```bash
+cp .env.example .env.local
+```
 
-## Learn More
+| Variable | Description |
+|---|---|
+| `NEXT_PUBLIC_SUPABASE_URL` | Your Supabase project URL (found in Project Settings → API) |
+| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Supabase anon/public key |
+| `SUPABASE_SERVICE_ROLE_KEY` | Supabase service role key — **never expose this client-side** |
+| `ADMIN_PASSWORD` | Password to access the admin dashboard |
+| `ADMIN_ROUTE_NAME` | URL slug for the admin route (e.g. `secret-dashboard`) |
+| `NEXT_PUBLIC_APP_URL` | Full public URL of the deployed app (e.g. `https://scanme.example.com`) |
 
-To learn more about Next.js, take a look at the following resources:
+## Supabase Setup
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+Create these three tables in your Supabase project:
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+```sql
+create table profiles (
+  id uuid primary key default gen_random_uuid(),
+  name text not null,
+  photo_url text,
+  bio text,
+  poll_type text check (poll_type in ('multiple_choice', 'text')),
+  poll_question text,
+  poll_options text[],
+  note_intro text,
+  instagram text,
+  survey_link text,
+  created_at timestamptz default now()
+);
 
-## Deploy on Vercel
+create table scans (
+  id uuid primary key default gen_random_uuid(),
+  scanned_at timestamptz default now(),
+  session_token text not null,
+  ip_hash text
+);
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+create table responses (
+  id uuid primary key default gen_random_uuid(),
+  session_token text not null,
+  poll_answer text,
+  comment text,
+  commenter_name text,
+  device_hash text,
+  submitted_at timestamptz default now()
+);
+```
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## Running Locally
+
+```bash
+npm install
+npm run dev
+```
+
+Open [http://localhost:3000](http://localhost:3000).
