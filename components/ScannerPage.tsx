@@ -8,6 +8,7 @@ const SESSION_DURATION_MS = 15 * 60 * 1000
 interface Props {
   profile: Profile
   sessionToken: string
+  testMode?: boolean
 }
 
 type PageState = 'checking' | 'already_submitted' | 'active' | 'expired' | 'submitted'
@@ -51,6 +52,18 @@ function ProgressBar({ progress }: { progress: number }) {
         className="h-full transition-[width] duration-500 ease-linear"
         style={{ width: `${progress}%`, backgroundColor: '#1D9E75' }}
       />
+    </div>
+  )
+}
+
+// ─── Test mode banner ─────────────────────────────────────────────────────────
+
+function TestModeBanner() {
+  return (
+    <div className="fixed top-0 left-0 right-0 z-50 bg-amber-50 border-b border-amber-200 py-1.5 text-center">
+      <p className="text-xs font-medium text-amber-700 tracking-wide">
+        Test mode — restrictions disabled
+      </p>
     </div>
   )
 }
@@ -141,7 +154,7 @@ function PollInput({ profile, value, onChange, hasError }: PollProps) {
 
 // ─── Main component ───────────────────────────────────────────────────────────
 
-export default function ScannerPage({ profile, sessionToken }: Props) {
+export default function ScannerPage({ profile, sessionToken, testMode = false }: Props) {
   const [pageState, setPageState] = useState<PageState>('checking')
   const [progress, setProgress] = useState(100)
   const [pollAnswer, setPollAnswer] = useState(profile.poll_type === 'slider' ? '5' : '')
@@ -153,13 +166,17 @@ export default function ScannerPage({ profile, sessionToken }: Props) {
   const startTimeRef = useRef<number>(0)
 
   useEffect(() => {
-    if (localStorage.getItem('scanme_submitted')) {
+    // In test mode: skip localStorage check entirely and go straight to active
+    if (!testMode && localStorage.getItem('scanme_submitted')) {
       setPageState('already_submitted')
       return
     }
 
     startTimeRef.current = Date.now()
     setPageState('active')
+
+    // In test mode: no countdown — session never expires
+    if (testMode) return
 
     const id = setInterval(() => {
       const elapsed = Date.now() - startTimeRef.current
@@ -172,7 +189,7 @@ export default function ScannerPage({ profile, sessionToken }: Props) {
     }, 500)
 
     return () => clearInterval(id)
-  }, [])
+  }, [testMode])
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault()
@@ -199,7 +216,9 @@ export default function ScannerPage({ profile, sessionToken }: Props) {
       const data: { success: boolean; message?: string } = await res.json()
 
       if (data.success) {
-        localStorage.setItem('scanme_submitted', 'true')
+        if (!testMode) {
+          localStorage.setItem('scanme_submitted', 'true')
+        }
         setPageState('submitted')
       } else {
         setSubmitError(data.message ?? 'Something went wrong. Please try again.')
@@ -326,13 +345,14 @@ export default function ScannerPage({ profile, sessionToken }: Props) {
   // ── active (main form) ───────────────────────────────────────────────────
   return (
     <div className="min-h-screen" style={{ backgroundColor: '#f9f6f1' }}>
-      <ProgressBar progress={progress} />
+      {testMode ? <TestModeBanner /> : <ProgressBar progress={progress} />}
 
       <div className="max-w-md mx-auto px-5 pt-10 pb-16">
-        {/* Expiry notice */}
-        <p className="text-xs text-stone-400 text-center mb-8 tracking-wide">
-          This link is just for you — only open for a little while
-        </p>
+        {!testMode && (
+          <p className="text-xs text-stone-400 text-center mb-8 tracking-wide">
+            This link is just for you — only open for a little while
+          </p>
+        )}
 
         {/* Profile header */}
         <div className="flex flex-col items-center text-center mb-8 space-y-4">

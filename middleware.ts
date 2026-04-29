@@ -43,7 +43,8 @@ export function middleware(request: NextRequest) {
   // Reject POST bodies that exceed the size limit before they reach route handlers.
   // Based on Content-Length header — chunked-encoded requests without it pass through
   // and rely on route-level limits.
-  if (request.method === 'POST') {
+  // /api/upload handles its own size validation (up to 5 MB) — exclude it here
+  if (request.method === 'POST' && pathname !== '/api/upload') {
     const contentLength = request.headers.get('content-length')
     if (contentLength && parseInt(contentLength, 10) > MAX_BODY_BYTES) {
       return new NextResponse(null, { status: 413 })

@@ -57,7 +57,7 @@ export async function POST(request: NextRequest) {
   }
 
   const { session_token, poll_answer, comment, commenter_name } = parsed.data
-  const adminPass = process.env.ADMIN_PASS ?? ''
+  const adminPass = process.env.ADMIN_PASSWORD ?? ''
 
   if (!testMode) {
     // Validate HMAC token + expiry — no DB round-trip needed

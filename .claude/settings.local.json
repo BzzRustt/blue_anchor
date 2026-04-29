@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell(Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass; cd c:\\\\dev\\\\05_blue_anchor; $output = & \".\\\\node_modules\\\\.bin\\\\next.cmd\" build 2>&1; $output | Select-String -Pattern \"error|Error|\\\\[adminPath\\\\]|page\\\\.js|Failed|Cannot|compiled\" | Select-Object -First 40; Write-Output \"Exit: $LASTEXITCODE\")"
+    ]
+  }
+}

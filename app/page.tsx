@@ -37,7 +37,7 @@ function ExpiredScreen() {
 
 export default async function Home({ searchParams }: Props) {
   const supabase = createAdminClient()
-  const adminPass = process.env.ADMIN_PASS ?? ''
+  const adminPass = process.env.ADMIN_PASSWORD ?? ''
 
   const { data, error: profileError } = await supabase
     .from('profiles')
@@ -74,7 +74,7 @@ export default async function Home({ searchParams }: Props) {
   // Test mode: bypass all token logic so development flows without friction
   if (profile.test_mode) {
     const testToken = generateSessionToken(adminPass)
-    return <ScannerPage profile={profile} sessionToken={testToken} />
+    return <ScannerPage profile={profile} sessionToken={testToken} testMode />
   }
 
   // Normalise searchParams
