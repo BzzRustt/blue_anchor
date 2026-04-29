@@ -63,6 +63,52 @@ const bodySchema = z
     }
   })
 
+// ─── PATCH — toggle test_mode only ───────────────────────────────────────────
+
+export async function PATCH(request: NextRequest) {
+  if (!isAdminAuthenticated(request)) {
+    return NextResponse.json({ success: false }, { status: 401 })
+  }
+
+  let body: unknown
+  try {
+    body = await request.json()
+  } catch {
+    return NextResponse.json({ success: false, message: 'Invalid request.' }, { status: 400 })
+  }
+
+  const parsed = z.object({ test_mode: z.boolean() }).safeParse(body)
+  if (!parsed.success) {
+    return NextResponse.json({ success: false, message: 'Invalid input.' }, { status: 400 })
+  }
+
+  const supabase = createAdminClient()
+
+  const { data: existing } = await supabase.from('profiles').select('id').maybeSingle()
+  const row = existing as Pick<Profile, 'id'> | null
+
+  if (!row) {
+    return NextResponse.json(
+      { success: false, message: 'No profile found.' },
+      { status: 404 }
+    )
+  }
+
+  const { error } = await supabase
+    .from('profiles')
+    .update({ test_mode: parsed.data.test_mode })
+    .eq('id', row.id)
+
+  if (error) {
+    console.error('[api/profile] patch error:', error.message)
+    return NextResponse.json({ success: false, message: 'Something went wrong.' }, { status: 500 })
+  }
+
+  return NextResponse.json({ success: true })
+}
+
+// ─── POST — validate + save the profile ──────────────────────────────────────
+
 export async function POST(request: NextRequest) {
   if (!isAdminAuthenticated(request)) {
     return NextResponse.json({ success: false }, { status: 401 })

@@ -2,6 +2,7 @@ import { Suspense } from 'react'
 import { notFound } from 'next/navigation'
 import { cookies } from 'next/headers'
 import { getAdminPath } from '@/lib/auth'
+import { createAdminClient } from '@/lib/supabase/admin'
 import LoginForm from '@/components/LoginForm'
 import AdminTabs from '@/components/AdminTabs'
 import AnalyticsTab from '@/components/tabs/AnalyticsTab'
@@ -22,7 +23,7 @@ function TabSpinner() {
   )
 }
 
-export default function AdminPage({ params }: Props) {
+export default async function AdminPage({ params }: Props) {
   const adminPath = getAdminPath()
 
   if (!adminPath || params.adminPath !== adminPath) {
@@ -36,8 +37,17 @@ export default function AdminPage({ params }: Props) {
     return <LoginForm />
   }
 
+  // Fetch test_mode to seed the toggle's initial state
+  const supabase = createAdminClient()
+  const { data: profileData } = await supabase
+    .from('profiles')
+    .select('test_mode')
+    .maybeSingle()
+  const initialTestMode = (profileData as { test_mode?: boolean } | null)?.test_mode === true
+
   return (
     <AdminTabs
+      initialTestMode={initialTestMode}
       analyticsContent={
         <Suspense fallback={<TabSpinner />}>
           <AnalyticsTab />

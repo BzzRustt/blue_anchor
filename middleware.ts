@@ -56,13 +56,18 @@ export function middleware(request: NextRequest) {
     return withSecurityHeaders(NextResponse.rewrite(new URL('/_404', request.url)))
   }
 
-  // API routes: apply general rate limit before passing through
+  // API routes: apply general rate limit before passing through.
+  // Authenticated admin requests are exempt — they should never hit a wall
+  // during development or admin operations.
   if (pathname.startsWith('/api/')) {
-    const ip = getIP(request)
-    if (apiRateLimiter.isLimited(ip)) {
-      return new NextResponse(null, { status: 429 })
+    const hasAdminSession = !!request.cookies.get('admin_session')?.value
+    if (!hasAdminSession) {
+      const ip = getIP(request)
+      if (apiRateLimiter.isLimited(ip)) {
+        return new NextResponse(null, { status: 429 })
+      }
+      apiRateLimiter.increment(ip)
     }
-    apiRateLimiter.increment(ip)
     return withSecurityHeaders(NextResponse.next())
   }
 

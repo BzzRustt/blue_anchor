@@ -9,6 +9,7 @@ export interface Profile {
   note_intro: string | null
   instagram: string | null
   survey_link: string | null
+  test_mode: boolean
   created_at: string
 }
 
@@ -46,6 +47,7 @@ export type Database = {
           note_intro?: string | null
           instagram?: string | null
           survey_link?: string | null
+          test_mode?: boolean
           created_at?: string
         }
         Update: {
@@ -59,6 +61,7 @@ export type Database = {
           note_intro?: string | null
           instagram?: string | null
           survey_link?: string | null
+          test_mode?: boolean
           created_at?: string
         }
         Relationships: []

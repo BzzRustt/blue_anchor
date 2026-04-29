@@ -1,17 +1,17 @@
 import { redirect } from 'next/navigation'
 import { headers } from 'next/headers'
 import crypto from 'crypto'
-import { v4 as uuidv4 } from 'uuid'
 import { createAdminClient } from '@/lib/supabase/admin'
-import type { Profile, Scan } from '@/types/database'
+import { generateSessionToken, verifySessionToken } from '@/lib/session-token'
+import type { Profile } from '@/types/database'
 import ScannerPage from '@/components/ScannerPage'
 
 export const dynamic = 'force-dynamic'
 
 const FIFTEEN_MINUTES_MS = 15 * 60 * 1000
 
-// UUIDv4 pattern — reject anything that doesn't look right before hitting the DB
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+// Basic shape check — rejects obviously malformed tokens before crypto work
+const TOKEN_RE = /^1\.[0-9a-z]+\.[0-9a-f]{64}$/
 
 interface Props {
   searchParams: { token?: string | string[] }
@@ -37,6 +37,7 @@ function ExpiredScreen() {
 
 export default async function Home({ searchParams }: Props) {
   const supabase = createAdminClient()
+  const adminPass = process.env.ADMIN_PASS ?? ''
 
   const { data, error: profileError } = await supabase
     .from('profiles')
@@ -45,7 +46,7 @@ export default async function Home({ searchParams }: Props) {
 
   const profile = data as Profile | null
 
-  // PGRST116 = "no rows" from Supabase — profile hasn't been seeded yet, not a real error
+  // PGRST116 = "no rows" — profile not seeded yet, not a real error
   if (profileError && profileError.code !== 'PGRST116') {
     return (
       <main
@@ -70,14 +71,21 @@ export default async function Home({ searchParams }: Props) {
     )
   }
 
-  // Normalise searchParams — Next.js may give string | string[] for repeated params
+  // Test mode: bypass all token logic so development flows without friction
+  if (profile.test_mode) {
+    const testToken = generateSessionToken(adminPass)
+    return <ScannerPage profile={profile} sessionToken={testToken} />
+  }
+
+  // Normalise searchParams
   const rawToken = searchParams.token
   const token = typeof rawToken === 'string' ? rawToken : undefined
 
   if (!token) {
-    // No token — generate a fresh one, log the scan, and redirect.
-    // Await the insert so the token exists in the DB before the redirect lands.
-    const sessionToken = uuidv4()
+    // No token — generate one, log the scan (fire-and-forget, no await),
+    // and redirect. The token is self-validating via HMAC so the redirect
+    // page doesn't need a DB round-trip to confirm freshness.
+    const sessionToken = generateSessionToken(adminPass)
 
     const headersList = headers()
     const rawIP =
@@ -86,28 +94,20 @@ export default async function Home({ searchParams }: Props) {
       '127.0.0.1'
     const ipHash = crypto.createHash('sha256').update(rawIP).digest('hex')
 
-    await supabase.from('scans').insert({ session_token: sessionToken, ip_hash: ipHash })
+    // Not awaited — analytics write, doesn't block the redirect
+    void supabase.from('scans').insert({ session_token: sessionToken, ip_hash: ipHash })
 
     redirect(`/?token=${sessionToken}`)
   }
 
-  // Fast path: reject malformed tokens without a DB round-trip
-  if (!UUID_RE.test(token)) {
+  // Fast reject: malformed tokens skip crypto entirely
+  if (!TOKEN_RE.test(token)) {
     return <ExpiredScreen />
   }
 
-  // Validate: token must exist in scans and be within the 15-minute window
-  const cutoff = new Date(Date.now() - FIFTEEN_MINUTES_MS).toISOString()
-  const { data: scanData } = await supabase
-    .from('scans')
-    .select('id')
-    .eq('session_token', token)
-    .gte('scanned_at', cutoff)
-    .maybeSingle()
-
-  const scan = scanData as Pick<Scan, 'id'> | null
-
-  if (!scan) {
+  // Validate HMAC + expiry — pure crypto, no DB call
+  const issuedAt = verifySessionToken(token, adminPass)
+  if (!issuedAt || Date.now() - issuedAt > FIFTEEN_MINUTES_MS) {
     return <ExpiredScreen />
   }
 
