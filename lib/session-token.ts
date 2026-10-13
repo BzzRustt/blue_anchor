@@ -7,7 +7,7 @@ const VERSION = '1'
  * Format: "1.<base36-timestamp>.<sha256-hex>"
  *
  * Token is self-validating — no DB lookup needed to verify freshness or integrity.
- * Uses ADMIN_PASS as the signing secret (already a required env var).
+ * Uses SESSION_SECRET as the signing secret.
  */
 export function generateSessionToken(secret: string): string {
   const ts = Date.now().toString(36)
