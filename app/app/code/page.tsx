@@ -5,12 +5,12 @@ import { ArrowSquareOut, IdentificationCard, Power } from '@phosphor-icons/react
 import { toggleCode } from '@/app/app/actions'
 import { CopyLinkButton } from '@/components/workspace/CopyLinkButton'
 import { PageIntro } from '@/components/workspace/PageIntro'
-import { db, schema } from '@/lib/db'
+import { schema, withOwnerDb } from '@/lib/db'
 import { requireOwner } from '@/lib/owner'
 
 export default async function CodePage() {
   const session = await requireOwner()
-  const [code] = await db.select().from(schema.codes).where(eq(schema.codes.userId, session.user.id)).limit(1)
+  const [code] = await withOwnerDb(session.user.id, (db) => db.select().from(schema.codes).where(eq(schema.codes.userId, session.user.id)).limit(1))
   const baseUrl = (process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3000').replace(/\/$/, '')
   const url = `${baseUrl}/t/${code.slug}`
   const qr = await QRCode.toDataURL(url, { width: 720, margin: 2, color: { dark: '#102018', light: '#ffffff' } })

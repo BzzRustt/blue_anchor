@@ -1,6 +1,6 @@
 import { betterAuth } from 'better-auth/minimal'
 import { drizzleAdapter } from 'better-auth/adapters/drizzle'
-import { db, schema } from '@/lib/db'
+import { authDb, schema } from '@/lib/db'
 
 const secret = process.env.BETTER_AUTH_SECRET ?? process.env.SESSION_SECRET
 
@@ -12,7 +12,7 @@ export const auth = betterAuth({
   appName: 'ScanMe',
   baseURL: process.env.BETTER_AUTH_URL ?? process.env.NEXT_PUBLIC_APP_URL,
   secret,
-  database: drizzleAdapter(db, {
+  database: drizzleAdapter(authDb, {
     provider: 'pg',
     schema: {
       ...schema,

@@ -3,13 +3,13 @@ import { desc, eq } from 'drizzle-orm'
 import { ArrowRight, Megaphone, Plus } from '@phosphor-icons/react/dist/ssr'
 import { publishCampaign } from '@/app/app/actions'
 import { PageIntro } from '@/components/workspace/PageIntro'
-import { db, schema } from '@/lib/db'
+import { schema, withOwnerDb } from '@/lib/db'
 import { requireOwner } from '@/lib/owner'
 
 export default async function CampaignsPage({ searchParams }: { searchParams: Promise<{ limit?: string }> }) {
   const session = await requireOwner()
   const query = await searchParams
-  const campaigns = await db.select().from(schema.campaigns).where(eq(schema.campaigns.userId, session.user.id)).orderBy(desc(schema.campaigns.createdAt))
+  const campaigns = await withOwnerDb(session.user.id, (db) => db.select().from(schema.campaigns).where(eq(schema.campaigns.userId, session.user.id)).orderBy(desc(schema.campaigns.createdAt)))
 
   return (
     <div className="grid gap-7">

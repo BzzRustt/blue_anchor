@@ -1,23 +1,43 @@
-import { neon } from '@neondatabase/serverless'
-import { drizzle } from 'drizzle-orm/neon-http'
+import { neon, Pool } from '@neondatabase/serverless'
+import { sql } from 'drizzle-orm'
+import { drizzle as drizzleHttp } from 'drizzle-orm/neon-http'
+import { drizzle as drizzleServerless } from 'drizzle-orm/neon-serverless'
 import * as schema from './schema'
 
-if (!process.env.DATABASE_URL) {
-  throw new Error('DATABASE_URL is not set. Copy .env.example to .env.local and fill it in.')
+function connection(name: 'AUTH_DATABASE_URL' | 'APP_DATABASE_URL' | 'VISITOR_DATABASE_URL') {
+  const value = process.env[name] ?? process.env.DATABASE_URL
+  if (!value) {
+    throw new Error(`${name} is not set. Copy .env.example to .env.local and fill it in.`)
+  }
+  return value
 }
 
+/** Better Auth can reach only its four persistence tables in production. */
+export const authDb = drizzleHttp(neon(connection('AUTH_DATABASE_URL')), { schema })
+
+/** Anonymous visitors can read the public scan experience and submit scans/responses. */
+export const visitorDb = drizzleHttp(neon(connection('VISITOR_DATABASE_URL')), { schema })
+
 /**
- * Owner-scoped database handle.
- *
- * The current configured connection may still use Neon's owner role and carries no user
- * identity, so RLS has nothing to match against. Every owner-facing query must therefore be scoped in SQL by
- * a `userId` derived from the session — never from a request body or query string.
- *
- * Security boundary: the session identity is not yet threaded through to Postgres, so RLS
- * (lib/db/rls.sql) is a second line of defence rather than the primary one. The upgrade
- * path is Neon RLS via pg_session_jwt, which makes auth.user_id() authoritative and lets
- * the policies stand alone — wire it in the auth slice, before any third party can read.
+ * Owner queries run as a NOBYPASSRLS role. The signed Better Auth session is verified
+ * before this helper is called; its user id is installed as transaction-local claims so
+ * auth.user_id() is authoritative for every statement in the callback.
  */
-export const db = drizzle(neon(process.env.DATABASE_URL), { schema })
+const ownerPool = new Pool({ connectionString: connection('APP_DATABASE_URL') })
+const ownerDb = drizzleServerless(ownerPool, { schema })
+type OwnerTransaction = Parameters<Parameters<typeof ownerDb.transaction>[0]>[0]
+
+export async function withOwnerDb<T>(
+  userId: string,
+  work: (tx: OwnerTransaction) => Promise<T>
+): Promise<T> {
+  if (!userId) throw new Error('A verified owner id is required for an owner database transaction.')
+
+  return ownerDb.transaction(async (tx) => {
+    const claims = JSON.stringify({ sub: userId, role: 'authenticated' })
+    await tx.execute(sql`select set_config('request.jwt.claims', ${claims}, true)`)
+    return work(tx)
+  })
+}
 
 export { schema }

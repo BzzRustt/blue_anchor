@@ -2,18 +2,18 @@ import { and, desc, eq } from 'drizzle-orm'
 import { Archive, ChatCircleDots, Eye, QrCode } from '@phosphor-icons/react/dist/ssr'
 import { archiveResponse } from '@/app/app/actions'
 import { PageIntro } from '@/components/workspace/PageIntro'
-import { db, schema } from '@/lib/db'
+import { schema, withOwnerDb } from '@/lib/db'
 import { requireOwner } from '@/lib/owner'
 import { answerText, ownerSummary } from '@/lib/product'
 
 export default async function InboxPage() {
   const session = await requireOwner()
   const [items, summary] = await Promise.all([
-    db.select({ response: schema.responses, campaignName: schema.campaigns.name, mode: schema.campaigns.mode })
-      .from(schema.responses)
-      .leftJoin(schema.campaigns, eq(schema.campaigns.id, schema.responses.campaignId))
-      .where(and(eq(schema.responses.userId, session.user.id), eq(schema.responses.archived, false)))
-      .orderBy(desc(schema.responses.submittedAt)).limit(50),
+    withOwnerDb(session.user.id, (db) => db.select({ response: schema.responses, campaignName: schema.campaigns.name, mode: schema.campaigns.mode })
+        .from(schema.responses)
+        .leftJoin(schema.campaigns, eq(schema.campaigns.id, schema.responses.campaignId))
+        .where(and(eq(schema.responses.userId, session.user.id), eq(schema.responses.archived, false)))
+        .orderBy(desc(schema.responses.submittedAt)).limit(50)),
     ownerSummary(session.user.id),
   ])
 

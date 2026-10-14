@@ -15,20 +15,35 @@ try {
   // Reported by the check below.
 }
 
-if (!process.env.DATABASE_URL) {
-  console.error('DATABASE_URL is not set. Fill in .env.local first.')
+const ownerUrl = process.env.DATABASE_OWNER_URL ?? process.env.DATABASE_URL
+
+if (!ownerUrl) {
+  console.error('DATABASE_OWNER_URL is not set. Fill in .env.local first.')
   process.exit(1)
 }
 
 const sqlText = readFileSync(new URL('../lib/db/rls.sql', import.meta.url), 'utf8')
-const client = new Client(process.env.DATABASE_URL)
+const client = new Client(ownerUrl)
 
 try {
   await client.connect()
   await client.query(sqlText)
   console.log('Applied lib/db/rls.sql.')
 } catch (error) {
-  console.error(`Failed to apply rls.sql: ${error.message}`)
+  console.error('Failed to apply rls.sql:', {
+    name: error.name,
+    message: error.message,
+    code: error.code,
+    detail: error.detail,
+    hint: error.hint,
+    position: error.position,
+    cause: error.cause?.message,
+    properties: Object.fromEntries(
+      Object.getOwnPropertyNames(error)
+        .filter((key) => !['stack', 'query', 'parameters'].includes(key))
+        .map((key) => [key, error[key]])
+    ),
+  })
   process.exitCode = 1
 } finally {
   await client.end()

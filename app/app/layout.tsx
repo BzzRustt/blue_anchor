@@ -5,12 +5,12 @@ import { Brand } from '@/components/Brand'
 import { ThemeToggle } from '@/components/ThemeToggle'
 import { SignOutButton } from '@/components/workspace/SignOutButton'
 import { WorkspaceNav } from '@/components/workspace/WorkspaceNav'
-import { db, schema } from '@/lib/db'
+import { schema, withOwnerDb } from '@/lib/db'
 import { requireOwner } from '@/lib/owner'
 
 export default async function WorkspaceLayout({ children }: { children: React.ReactNode }) {
   const session = await requireOwner()
-  const [owner] = await db.select({ name: schema.users.name, plan: schema.users.plan, image: schema.users.image }).from(schema.users).where(eq(schema.users.id, session.user.id)).limit(1)
+  const [owner] = await withOwnerDb(session.user.id, (db) => db.select({ name: schema.users.name, plan: schema.users.plan, image: schema.users.image }).from(schema.users).where(eq(schema.users.id, session.user.id)).limit(1))
   const initials = (owner?.name ?? session.user.name).split(/\s+/).map((part) => part[0]).join('').slice(0, 2).toUpperCase()
 
   return (

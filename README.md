@@ -23,11 +23,12 @@ ScanMe is a multi-owner QR networking product. An owner creates a permanent code
 
 ## Local setup
 
-1. Copy `.env.example` to `.env.local` and add the Neon connection string and secrets.
+1. Copy `.env.example` to `.env.local`, place Neon's pooled owner connection in `DATABASE_OWNER_URL`, and add the application secrets.
 2. Install dependencies with `npm install`.
-3. Apply the schema with `npm run db:push`. This command also restores the custom RLS policies after Drizzle syncs the tables.
-4. Run `npm run db:verify` to check constraints and database security status.
-5. Start with `npm run dev`, then open `http://localhost:3000`.
+3. Apply the schema with `npm run db:push`. This also restores the custom RLS policies after Drizzle syncs the tables.
+4. Run `npm run db:provision-runtime` once. It creates independent passwords for the restricted `app_user`, `auth_user`, and `visitor_user` roles and writes their URLs only to the ignored `.env.local` file.
+5. Run `npm run db:verify` to check constraints, grants, and cross-owner isolation.
+6. Start with `npm run dev`, then open `http://localhost:3000`.
 
 ## Verification
 
@@ -38,7 +39,7 @@ npm run build
 npm run db:verify
 ```
 
-`db:verify` intentionally fails its final enforcement check while `DATABASE_URL` uses the Neon owner role, which has `BYPASSRLS`. The application currently derives the owner ID from the signed session and scopes every owner query in SQL. Before exposing direct database access to any client, issue a login credential for `app_user`, thread a verified identity into Postgres, and make the existing policies load-bearing.
+Production uses three `NOBYPASSRLS` database roles. `auth_user` can access only Better Auth persistence, `app_user` receives a verified owner identity inside each transaction, and `visitor_user` can read only live public profile columns and submit scans/responses. `DATABASE_OWNER_URL` is reserved for migrations and verification and must not be added to the deployed web runtime.
 
 ## Prototype boundaries
 

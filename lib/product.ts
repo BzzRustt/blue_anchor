@@ -1,6 +1,6 @@
 import crypto from 'node:crypto'
 import { and, asc, desc, eq, sql } from 'drizzle-orm'
-import { db, schema } from '@/lib/db'
+import { schema, visitorDb, withOwnerDb } from '@/lib/db'
 
 export type QuestionConfig = {
   prompt: string
@@ -32,42 +32,57 @@ function createSlug(name: string) {
 }
 
 export async function ensureOwnerSetup(userId: string, name: string) {
-  const [existingCode] = await db.select().from(schema.codes).where(eq(schema.codes.userId, userId)).limit(1)
-  let code = existingCode
+  return withOwnerDb(userId, async (db) => {
+    const [existingCode] = await db.select().from(schema.codes).where(eq(schema.codes.userId, userId)).limit(1)
+    let code = existingCode
 
-  if (!code) {
-    ;[code] = await db.insert(schema.codes).values({
-      userId,
-      slug: createSlug(name),
-      label: 'My ScanMe',
-    }).returning()
-  }
+    if (!code) {
+      ;[code] = await db.insert(schema.codes).values({
+        userId,
+        slug: createSlug(name),
+        label: 'My ScanMe',
+      }).returning()
+    }
 
-  const [existingCampaign] = await db.select().from(schema.campaigns).where(eq(schema.campaigns.codeId, code.id)).orderBy(desc(schema.campaigns.createdAt)).limit(1)
-  let campaign = existingCampaign
+    const [existingCampaign] = await db.select().from(schema.campaigns).where(eq(schema.campaigns.codeId, code.id)).orderBy(desc(schema.campaigns.createdAt)).limit(1)
+    let campaign = existingCampaign
 
-  if (!campaign) {
-    ;[campaign] = await db.insert(schema.campaigns).values({
-      userId,
-      codeId: code.id,
-      mode: 'networking',
-      name: 'First introductions',
-      status: 'live',
-      repeatPolicy: 'always_open',
-    }).returning()
+    if (!campaign) {
+      ;[campaign] = await db.insert(schema.campaigns).values({
+        userId,
+        codeId: code.id,
+        mode: 'networking',
+        name: 'First introductions',
+        status: 'live',
+        repeatPolicy: 'always_open',
+      }).returning()
 
-    await db.insert(schema.questionBlocks).values([
-      { campaignId: campaign.id, type: 'scale', position: 0, required: true, config: { prompt: 'Rate my drip from 1 to 10', min: 1, max: 10 } },
-      { campaignId: campaign.id, type: 'open_text', position: 1, required: false, config: { prompt: 'Do you have a message for me?', placeholder: 'Say something real' } },
-    ])
-  }
+      await db.insert(schema.questionBlocks).values([
+        { campaignId: campaign.id, type: 'scale', position: 0, required: true, config: { prompt: 'Rate my drip from 1 to 10', min: 1, max: 10 } },
+        { campaignId: campaign.id, type: 'open_text', position: 1, required: false, config: { prompt: 'Do you have a message for me?', placeholder: 'Say something real' } },
+      ])
+    }
 
-  return { code, campaign }
+    return { code, campaign }
+  })
 }
 
 export async function getVisitorExperience(slug: string): Promise<VisitorExperience | null> {
-  const [result] = await db
-    .select({ code: schema.codes, campaign: schema.campaigns, owner: schema.users })
+  const [result] = await visitorDb
+    .select({
+      code: schema.codes,
+      campaign: schema.campaigns,
+      owner: {
+        name: schema.users.name,
+        image: schema.users.image,
+        bio: schema.users.bio,
+        role: schema.users.role,
+        company: schema.users.company,
+        instagram: schema.users.instagram,
+        linkedin: schema.users.linkedin,
+        website: schema.users.website,
+      },
+    })
     .from(schema.codes)
     .innerJoin(schema.campaigns, and(eq(schema.campaigns.codeId, schema.codes.id), eq(schema.campaigns.status, 'live')))
     .innerJoin(schema.users, eq(schema.users.id, schema.codes.userId))
@@ -76,7 +91,7 @@ export async function getVisitorExperience(slug: string): Promise<VisitorExperie
 
   if (!result) return null
 
-  const blocks = await db.select().from(schema.questionBlocks).where(eq(schema.questionBlocks.campaignId, result.campaign.id)).orderBy(asc(schema.questionBlocks.position))
+  const blocks = await visitorDb.select().from(schema.questionBlocks).where(eq(schema.questionBlocks.campaignId, result.campaign.id)).orderBy(asc(schema.questionBlocks.position))
 
   return {
     owner: {
@@ -96,15 +111,17 @@ export async function getVisitorExperience(slug: string): Promise<VisitorExperie
 }
 
 export async function ownerSummary(userId: string) {
-  const [responseCount, scanCount, unreadCount] = await Promise.all([
-    db.select({ value: sql<number>`count(*)::int` }).from(schema.responses).where(eq(schema.responses.userId, userId)),
-    db.select({ value: sql<number>`count(*)::int` }).from(schema.scans).innerJoin(schema.codes, eq(schema.codes.id, schema.scans.codeId)).where(eq(schema.codes.userId, userId)),
-    db.select({ value: sql<number>`count(*)::int` }).from(schema.responses).where(and(eq(schema.responses.userId, userId), sql`${schema.responses.readAt} is null`)),
-  ])
+  return withOwnerDb(userId, async (db) => {
+    const [responseCount, scanCount, unreadCount] = await Promise.all([
+      db.select({ value: sql<number>`count(*)::int` }).from(schema.responses).where(eq(schema.responses.userId, userId)),
+      db.select({ value: sql<number>`count(*)::int` }).from(schema.scans).innerJoin(schema.codes, eq(schema.scans.codeId, schema.codes.id)).where(eq(schema.codes.userId, userId)),
+      db.select({ value: sql<number>`count(*)::int` }).from(schema.responses).where(and(eq(schema.responses.userId, userId), sql`${schema.responses.readAt} is null`)),
+    ])
 
-  const responses = responseCount[0]?.value ?? 0
-  const scans = scanCount[0]?.value ?? 0
-  return { responses, scans, unread: unreadCount[0]?.value ?? 0, conversion: scans > 0 ? Math.round((responses / scans) * 100) : 0 }
+    const responses = responseCount[0]?.value ?? 0
+    const scans = scanCount[0]?.value ?? 0
+    return { responses, scans, unread: unreadCount[0]?.value ?? 0, conversion: scans > 0 ? Math.round((responses / scans) * 100) : 0 }
+  })
 }
 
 export function answerText(value: unknown): string {

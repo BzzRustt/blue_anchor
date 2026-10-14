@@ -3,7 +3,7 @@ import { and, eq, gte } from 'drizzle-orm'
 import { NextRequest, NextResponse } from 'next/server'
 import { cookies } from 'next/headers'
 import { z } from 'zod'
-import { db, schema } from '@/lib/db'
+import { schema, visitorDb } from '@/lib/db'
 import { getVisitorExperience } from '@/lib/product'
 import { submissionLimiter } from '@/lib/rate-limiter'
 import { verifySessionToken } from '@/lib/session-token'
@@ -26,7 +26,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
   const experience = await getVisitorExperience(code)
   if (!experience) return NextResponse.json({ error: 'This code is not active.' }, { status: 404 })
 
-  const [blocked] = await db.select({ id: schema.blockedDevices.id }).from(schema.blockedDevices).where(and(eq(schema.blockedDevices.userId, experience.code.userId), eq(schema.blockedDevices.deviceHash, ipHash))).limit(1)
+  const [blocked] = await visitorDb.select({ id: schema.blockedDevices.id }).from(schema.blockedDevices).where(and(eq(schema.blockedDevices.userId, experience.code.userId), eq(schema.blockedDevices.deviceHash, ipHash))).limit(1)
   if (blocked) return NextResponse.json({ error: 'Responses are not available from this device.' }, { status: 403 })
 
   const allowed = new Set(experience.blocks.map((block) => block.id))
@@ -41,11 +41,11 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
   if (experience.campaign.repeatPolicy !== 'always_open') {
     const conditions = [eq(schema.responses.codeId, experience.code.id), eq(schema.responses.sessionToken, token)]
     if (experience.campaign.repeatPolicy === 'once_per_day') { const today = new Date(); today.setHours(0, 0, 0, 0); conditions.push(gte(schema.responses.submittedAt, today)) }
-    const [previous] = await db.select({ id: schema.responses.id }).from(schema.responses).where(and(...conditions)).limit(1)
+    const [previous] = await visitorDb.select({ id: schema.responses.id }).from(schema.responses).where(and(...conditions)).limit(1)
     if (previous) return NextResponse.json({ error: 'You have already responded to this code.' }, { status: 409 })
   }
 
-  await db.insert(schema.responses).values({ userId: experience.code.userId, codeId: experience.code.id, campaignId: experience.campaign.id, sessionToken: token, answers, deviceHash: ipHash })
+  await visitorDb.insert(schema.responses).values({ userId: experience.code.userId, codeId: experience.code.id, campaignId: experience.campaign.id, sessionToken: token, answers, deviceHash: ipHash })
   submissionLimiter.increment(ipHash)
   return NextResponse.json({ ok: true }, { status: 201 })
 }

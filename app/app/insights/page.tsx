@@ -1,7 +1,7 @@
 import { and, desc, eq, gte, inArray } from 'drizzle-orm'
 import { ChartLineUp, ChatCircleDots, QrCode, TrendUp } from '@phosphor-icons/react/dist/ssr'
 import { PageIntro } from '@/components/workspace/PageIntro'
-import { db, schema } from '@/lib/db'
+import { schema, withOwnerDb } from '@/lib/db'
 import { requireOwner } from '@/lib/owner'
 import { ownerSummary } from '@/lib/product'
 
@@ -15,17 +15,19 @@ function getSevenDayWindowStart() {
 export default async function InsightsPage() {
   const session = await requireOwner()
   const since = getSevenDayWindowStart()
-  const codes = await db.select({ id: schema.codes.id }).from(schema.codes).where(eq(schema.codes.userId, session.user.id))
-  const codeIds = codes.map((code) => code.id)
   const [summary, scans] = await Promise.all([
     ownerSummary(session.user.id),
-    codeIds.length
-      ? db
-          .select({ codeId: schema.scans.codeId, scannedAt: schema.scans.scannedAt })
-          .from(schema.scans)
-          .where(and(gte(schema.scans.scannedAt, since), inArray(schema.scans.codeId, codeIds)))
-          .orderBy(desc(schema.scans.scannedAt))
-      : Promise.resolve([]),
+    withOwnerDb(session.user.id, async (db) => {
+      const codes = await db.select({ id: schema.codes.id }).from(schema.codes).where(eq(schema.codes.userId, session.user.id))
+      const codeIds = codes.map((code) => code.id)
+      return codeIds.length
+        ? db
+            .select({ codeId: schema.scans.codeId, scannedAt: schema.scans.scannedAt })
+            .from(schema.scans)
+            .where(and(gte(schema.scans.scannedAt, since), inArray(schema.scans.codeId, codeIds)))
+            .orderBy(desc(schema.scans.scannedAt))
+        : []
+    }),
   ])
   const days = Array.from({ length: 7 }, (_, index) => { const date = new Date(since.getTime() + index * 86_400_000); return { key: date.toISOString().slice(0, 10), label: date.toLocaleDateString('en-GB', { weekday: 'short' }), count: 0 } })
   for (const scan of scans) { const day = days.find((item) => item.key === scan.scannedAt.toISOString().slice(0, 10)); if (day) day.count++ }

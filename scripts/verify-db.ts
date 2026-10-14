@@ -1,17 +1,26 @@
 /**
- * Proves the schema's guarantees against the real database.
- *
- * Run after any schema change:  npm run db:verify
- *
- * Checks the things that are claims rather than syntax: the one-live-campaign-per-code
- * constraint, the plan history cutoff, cascade behaviour on delete, and whether RLS is
- * actually enforced for the role the application connects as.
+ * Verifies ScanMe's schema, constraints, role grants, and tenant isolation against Neon.
+ * Run after `db:rls` and `db:provision-runtime`.
  */
 import { neon } from '@neondatabase/serverless'
 import { historyCutoff } from '../lib/plans.ts'
 
 process.loadEnvFile('.env.local')
-const sql = neon(process.env.DATABASE_URL!)
+
+const ownerUrl = process.env.DATABASE_OWNER_URL
+const appUrl = process.env.APP_DATABASE_URL ?? process.env.DATABASE_URL
+const authUrl = process.env.AUTH_DATABASE_URL
+const visitorUrl = process.env.VISITOR_DATABASE_URL
+
+if (!ownerUrl || !appUrl || !authUrl || !visitorUrl) {
+  console.error('DATABASE_OWNER_URL, APP_DATABASE_URL, AUTH_DATABASE_URL and VISITOR_DATABASE_URL are required.')
+  process.exit(1)
+}
+
+const admin = neon(ownerUrl)
+const app = neon(appUrl)
+const auth = neon(authUrl)
+const visitor = neon(visitorUrl)
 
 let failures = 0
 
@@ -20,15 +29,26 @@ function check(label: string, passed: boolean, detail = '') {
   if (!passed) failures++
 }
 
-const TEST_USER = 'verify-test-user'
-
-async function cleanup() {
-  await sql`DELETE FROM users WHERE id = ${TEST_USER}`
+async function isRejected(work: () => Promise<unknown>) {
+  try {
+    await work()
+    return false
+  } catch {
+    return true
+  }
 }
 
-// ─── structure ────────────────────────────────────────────────────────────────
+const USER_A = 'verify-user-a'
+const USER_B = 'verify-user-b'
 
-const tables = await sql`
+async function cleanup() {
+  await admin`DELETE FROM users WHERE id IN (${USER_A}, ${USER_B})`
+}
+
+await cleanup()
+
+// Structure and policy coverage.
+const tables = await admin`
   SELECT c.relname, c.relrowsecurity, c.relforcerowsecurity,
          (SELECT count(*)::int FROM pg_policy p WHERE p.polrelid = c.oid) AS policies
   FROM pg_class c
@@ -37,151 +57,170 @@ const tables = await sql`
   ORDER BY c.relname
 `
 
-const authTables = new Set(['session', 'account', 'verification'])
-const productTables = tables.filter((table) => !authTables.has(table.relname))
-check('15 tables exist (12 product, 3 auth)', tables.length === 15 && productTables.length === 12, `found ${tables.length}`)
+check('15 application tables exist', tables.length === 15, `found ${tables.length}`)
 check(
-  'RLS enabled on every product table',
-  productTables.every((t) => t.relrowsecurity),
-  productTables.filter((t) => !t.relrowsecurity).map((t) => t.relname).join(', ') || 'all enabled'
+  'RLS is enabled and forced on every application table',
+  tables.every((table) => table.relrowsecurity && table.relforcerowsecurity),
+  tables.filter((table) => !table.relrowsecurity || !table.relforcerowsecurity).map((table) => table.relname).join(', ') || 'all covered'
 )
 check(
-  'every product table has at least one policy',
-  productTables.every((t) => t.policies > 0),
-  productTables.filter((t) => t.policies === 0).map((t) => t.relname).join(', ') || 'all covered'
+  'every application table has at least one policy',
+  tables.every((table) => table.policies > 0),
+  tables.filter((table) => table.policies === 0).map((table) => table.relname).join(', ') || 'all covered'
 )
 
-const ext = await sql`SELECT installed_version FROM pg_available_extensions WHERE name = 'pg_session_jwt'`
-check('pg_session_jwt installed', !!ext[0]?.installed_version, ext[0]?.installed_version ?? 'not installed')
+const ext = await admin`SELECT installed_version FROM pg_available_extensions WHERE name = 'pg_session_jwt'`
+check('pg_session_jwt is installed', Boolean(ext[0]?.installed_version), ext[0]?.installed_version ?? 'not installed')
 
-// ─── is RLS actually enforced for the connecting role? ────────────────────────
-
-const role = await sql`SELECT current_user AS role, usesuper AS superuser, usebypassrls AS bypass
-                       FROM pg_user WHERE usename = current_user`
-const bypasses = role[0]?.bypass || role[0]?.superuser
-const forced = productTables.every((t) => t.relforcerowsecurity)
-
-await sql`INSERT INTO users (id, email, name) VALUES (${TEST_USER}, 'verify@example.test', 'Verify User')`
-const readWithoutJwt = await sql`SELECT id FROM users WHERE id = ${TEST_USER}`
-
-// A table owner bypasses its own RLS unless FORCE ROW LEVEL SECURITY is set. This is
-// expected for a server-side-only app, but it must be stated, not assumed away.
-console.log(
-  `INFO  connecting role=${role[0]?.role} bypassrls=${bypasses} force_rls=${forced} ` +
-    `read_without_jwt=${readWithoutJwt.length} row(s)`
-)
-
-// The app must eventually connect as app_user, not the owner. Assert the role exists and
-// that it cannot bypass policy, so this cannot silently regress.
-const appRole = await sql`SELECT rolbypassrls, rolcanlogin FROM pg_roles WHERE rolname = 'app_user'`
-check('least-privilege app_user role exists', appRole.length === 1)
-check(
-  'app_user cannot bypass RLS',
-  appRole.length === 1 && appRole[0].rolbypassrls === false,
-  `rolbypassrls=${appRole[0]?.rolbypassrls}`
-)
-
-const appGrants = await sql`
-  SELECT count(DISTINCT table_name)::int AS n FROM information_schema.role_table_grants
-  WHERE grantee = 'app_user' AND privilege_type = 'SELECT'
+// Runtime roles and grants.
+const roles = await admin`
+  SELECT rolname, rolcanlogin, rolbypassrls, rolsuper, rolcreatedb, rolcreaterole
+  FROM pg_roles
+  WHERE rolname IN ('app_user', 'auth_user', 'visitor_user')
+  ORDER BY rolname
 `
-check('app_user is granted read on all 12 tables', appGrants[0].n >= 12, `${appGrants[0].n} tables`)
-
-// Honest status line: RLS is not yet load-bearing while the app connects as the owner.
+check('three runtime roles exist and can log in', roles.length === 3 && roles.every((role) => role.rolcanlogin))
 check(
-  'RLS is enforced for the connecting role',
-  !bypasses || forced,
-  bypasses
-    ? 'NOT ENFORCED — app still connects as neondb_owner (BYPASSRLS). Closes in the auth slice; see lib/db/rls.sql'
-    : 'enforced'
+  'runtime roles cannot bypass RLS or administer Postgres',
+  roles.every((role) => !role.rolbypassrls && !role.rolsuper && !role.rolcreatedb && !role.rolcreaterole)
 )
 
-// ─── one live campaign per code ───────────────────────────────────────────────
-
-const [code] = await sql`
-  INSERT INTO codes (user_id, slug) VALUES (${TEST_USER}, 'verify-slug') RETURNING id
+const [grantCheck] = await admin`
+  SELECT
+    has_table_privilege('app_user', 'codes', 'SELECT') AS app_codes,
+    has_table_privilege('app_user', 'session', 'SELECT') AS app_sessions,
+    has_table_privilege('auth_user', 'session', 'SELECT') AS auth_sessions,
+    has_table_privilege('auth_user', 'codes', 'SELECT') AS auth_codes,
+    has_column_privilege('visitor_user', 'users', 'name', 'SELECT') AS visitor_name,
+    has_column_privilege('visitor_user', 'users', 'email', 'SELECT') AS visitor_email,
+    has_column_privilege('visitor_user', 'responses', 'answers', 'SELECT') AS visitor_answers
 `
-await sql`
+check('app_user can query product data but not auth sessions', grantCheck.app_codes && !grantCheck.app_sessions)
+check('auth_user can persist auth data but cannot query campaigns/codes', grantCheck.auth_sessions && !grantCheck.auth_codes)
+check('visitor_user can read public names but not email or answers', grantCheck.visitor_name && !grantCheck.visitor_email && !grantCheck.visitor_answers)
+
+const [[appIdentity], [authIdentity], [visitorIdentity]] = await Promise.all([
+  app`SELECT current_user AS role, current_setting('request.jwt.claims', true) AS claims`,
+  auth`SELECT current_user AS role`,
+  visitor`SELECT current_user AS role`,
+])
+check('APP_DATABASE_URL uses app_user', appIdentity?.role === 'app_user', appIdentity?.role)
+check('AUTH_DATABASE_URL uses auth_user', authIdentity?.role === 'auth_user', authIdentity?.role)
+check('VISITOR_DATABASE_URL uses visitor_user', visitorIdentity?.role === 'visitor_user', visitorIdentity?.role)
+
+// Seed two owners through the migration-only connection.
+await admin`
+  INSERT INTO users (id, email, name)
+  VALUES
+    (${USER_A}, 'verify-a@example.test', 'Verify A'),
+    (${USER_B}, 'verify-b@example.test', 'Verify B')
+`
+const [codeA, codeB] = await admin`
+  INSERT INTO codes (user_id, slug)
+  VALUES (${USER_A}, 'verify-a'), (${USER_B}, 'verify-b')
+  RETURNING id, user_id
+`
+const [campaignA, campaignB] = await admin`
   INSERT INTO campaigns (user_id, code_id, mode, name, status)
-  VALUES (${TEST_USER}, ${code.id}, 'private', 'First live', 'live')
+  VALUES
+    (${USER_A}, ${codeA.id}, 'networking', 'A live', 'live'),
+    (${USER_B}, ${codeB.id}, 'networking', 'B live', 'live')
+  RETURNING id, user_id
+`
+await admin`
+  INSERT INTO question_blocks (campaign_id, type, position, required, config)
+  VALUES (${campaignA.id}, 'open_text', 0, false, '{"prompt":"Hello A"}'::jsonb)
 `
 
-let secondLiveRejected = false
-let rejectionDetail = 'second live campaign was ACCEPTED'
-try {
-  await sql`
-    INSERT INTO campaigns (user_id, code_id, mode, name, status)
-    VALUES (${TEST_USER}, ${code.id}, 'creator', 'Second live', 'live')
-  `
-} catch (error) {
-  secondLiveRejected = true
-  rejectionDetail = (error as Error).message.split('\n')[0]
-}
-check('a second live campaign on one code is rejected', secondLiveRejected, rejectionDetail)
+// Owner isolation: no claims means no rows; A's claim never reveals or writes B's data.
+const withoutClaims = await app`SELECT id FROM users`
+check('app_user sees no owner rows without verified claims', withoutClaims.length === 0, `${withoutClaims.length} visible`)
 
-// Drafts on the same code must still be allowed — the index is partial, not total.
+const [, ownUsers, ownCodes, otherCodes] = await app.transaction([
+  app`SELECT set_config('request.jwt.claims', ${JSON.stringify({ sub: USER_A })}, true)`,
+  app`SELECT id FROM users`,
+  app`SELECT id FROM codes WHERE user_id = ${USER_A}`,
+  app`SELECT id FROM codes WHERE user_id = ${USER_B}`,
+])
+check('owner A can read their own row', ownUsers.length === 1 && ownUsers[0].id === USER_A)
+check('owner A can read their own code', ownCodes.length === 1)
+check('owner A cannot read owner B code', otherCodes.length === 0)
+
+const crossOwnerWriteRejected = await isRejected(() => app.transaction([
+  app`SELECT set_config('request.jwt.claims', ${JSON.stringify({ sub: USER_A })}, true)`,
+  app`INSERT INTO codes (user_id, slug) VALUES (${USER_B}, 'verify-cross-owner')`,
+]))
+check('owner A cannot write owner B data', crossOwnerWriteRejected)
+
+// Auth role access and public visitor column boundary.
+const authUsers = await auth`SELECT id FROM users WHERE id IN (${USER_A}, ${USER_B})`
+check('auth_user can resolve users for sign-in', authUsers.length === 2)
+check('auth_user cannot query product tables', await isRejected(() => auth`SELECT id FROM codes LIMIT 1`))
+
+const publicOwner = await visitor`SELECT id, name FROM users WHERE id = ${USER_A}`
+check('visitor_user can read a live public owner', publicOwner.length === 1 && publicOwner[0].name === 'Verify A')
+check('visitor_user cannot read owner email', await isRejected(() => visitor`SELECT email FROM users WHERE id = ${USER_A}`))
+
+await visitor`
+  INSERT INTO scans (code_id, campaign_id, session_token, ip_hash)
+  VALUES (${codeA.id}, ${campaignA.id}, 'visitor-scan', 'verify-hash')
+`
+await visitor`
+  INSERT INTO responses (user_id, campaign_id, code_id, session_token, answers, device_hash)
+  VALUES (${USER_A}, ${campaignA.id}, ${codeA.id}, 'visitor-response', '{"answer":"hello"}'::jsonb, 'verify-hash')
+`
+const visitorResponse = await visitor`SELECT id FROM responses WHERE code_id = ${codeA.id} AND session_token = 'visitor-response'`
+check('visitor_user can submit and repeat-check a live response', visitorResponse.length === 1)
+check('visitor_user cannot read response answers', await isRejected(() => visitor`SELECT answers FROM responses LIMIT 1`))
+
+// Core product constraints.
+let secondLiveRejected = false
+try {
+  await admin`
+    INSERT INTO campaigns (user_id, code_id, mode, name, status)
+    VALUES (${USER_A}, ${codeA.id}, 'private', 'Second live', 'live')
+  `
+} catch {
+  secondLiveRejected = true
+}
+check('a second live campaign on one code is rejected', secondLiveRejected)
+
 let draftAllowed = true
 try {
-  await sql`
+  await admin`
     INSERT INTO campaigns (user_id, code_id, mode, name, status)
-    VALUES (${TEST_USER}, ${code.id}, 'networking', 'A draft', 'draft')
+    VALUES (${USER_A}, ${codeA.id}, 'private', 'A draft', 'draft')
   `
 } catch {
   draftAllowed = false
 }
 check('multiple non-live campaigns on one code are allowed', draftAllowed)
 
-// ─── plan history cutoff ──────────────────────────────────────────────────────
-
-const [liveCampaign] = await sql`
-  SELECT id FROM campaigns WHERE user_id = ${TEST_USER} AND status = 'live'
-`
-await sql`
+await admin`
   INSERT INTO responses (user_id, campaign_id, code_id, session_token, submitted_at)
   VALUES
-    (${TEST_USER}, ${liveCampaign.id}, ${code.id}, 'tok-old',   now() - interval '31 days'),
-    (${TEST_USER}, ${liveCampaign.id}, ${code.id}, 'tok-fresh', now() - interval '2 days')
+    (${USER_A}, ${campaignA.id}, ${codeA.id}, 'tok-old', now() - interval '31 days'),
+    (${USER_A}, ${campaignA.id}, ${codeA.id}, 'tok-fresh', now() - interval '2 days')
 `
 
 const cutoff = historyCutoff('free')!
-const visibleToFree = await sql`
+const visibleToFree = await admin`
   SELECT session_token FROM responses
-  WHERE user_id = ${TEST_USER} AND submitted_at >= ${cutoff.toISOString()}
+  WHERE user_id = ${USER_A} AND submitted_at >= ${cutoff.toISOString()}
 `
-check(
-  'free plan sees only responses inside 30 days',
-  visibleToFree.length === 1 && visibleToFree[0].session_token === 'tok-fresh',
-  `${visibleToFree.length} visible: ${visibleToFree.map((r) => r.session_token).join(', ')}`
-)
+check('free plan cutoff excludes the 31-day response', visibleToFree.some((row) => row.session_token === 'tok-fresh') && !visibleToFree.some((row) => row.session_token === 'tok-old'))
 
-const allResponses = await sql`SELECT count(*)::int AS n FROM responses WHERE user_id = ${TEST_USER}`
-check('older responses are retained, not deleted', allResponses[0].n === 2, `${allResponses[0].n} stored`)
+await admin`DELETE FROM campaigns WHERE id = ${campaignA.id}`
+const survived = await admin`SELECT campaign_id FROM responses WHERE user_id = ${USER_A}`
+check('deleting a campaign keeps response history', survived.length >= 3 && survived.every((row) => row.campaign_id === null))
 
-// ─── delete behaviour ─────────────────────────────────────────────────────────
-
-await sql`DELETE FROM campaigns WHERE id = ${liveCampaign.id}`
-const survived = await sql`
-  SELECT campaign_id FROM responses WHERE user_id = ${TEST_USER}
-`
-check(
-  'deleting a campaign keeps its responses',
-  survived.length === 2 && survived.every((r) => r.campaign_id === null),
-  `${survived.length} response(s) survived, campaign_id nulled`
-)
-
-await sql`DELETE FROM codes WHERE id = ${code.id}`
-const afterCodeDelete = await sql`SELECT count(*)::int AS n FROM responses WHERE user_id = ${TEST_USER}`
-check(
-  'deleting a code cascades its responses',
-  afterCodeDelete[0].n === 0,
-  `${afterCodeDelete[0].n} remaining`
-)
-
-// ─── done ─────────────────────────────────────────────────────────────────────
+await admin`DELETE FROM codes WHERE id = ${codeA.id}`
+const afterCodeDelete = await admin`SELECT count(*)::int AS n FROM responses WHERE user_id = ${USER_A}`
+check('deleting a code cascades its responses', afterCodeDelete[0].n === 0, `${afterCodeDelete[0].n} remaining`)
 
 await cleanup()
-const leftover = await sql`SELECT count(*)::int AS n FROM users WHERE id = ${TEST_USER}`
-check('test data cleaned up', leftover[0].n === 0)
+const leftover = await admin`SELECT count(*)::int AS n FROM users WHERE id IN (${USER_A}, ${USER_B})`
+check('verification data is cleaned up', leftover[0].n === 0)
 
 console.log(failures === 0 ? '\nAll database checks passed.' : `\n${failures} check(s) failed.`)
 process.exit(failures === 0 ? 0 : 1)
