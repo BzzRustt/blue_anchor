@@ -28,9 +28,22 @@ BEGIN
 END
 $$;
 
-ALTER ROLE app_user NOBYPASSRLS NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION;
-ALTER ROLE auth_user NOBYPASSRLS NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION;
-ALTER ROLE visitor_user NOBYPASSRLS NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION;
+-- Neon project owners can create restricted roles but cannot change attributes
+-- reserved for a true PostgreSQL superuser (including SUPERUSER/BYPASSRLS). New
+-- roles already receive these safe defaults above. For pre-existing roles, fail
+-- closed instead of attempting an ALTER ROLE that Neon will reject.
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1
+    FROM pg_roles
+    WHERE rolname IN ('app_user', 'auth_user', 'visitor_user')
+      AND (rolsuper OR rolbypassrls OR rolcreatedb OR rolcreaterole OR rolreplication)
+  ) THEN
+    RAISE EXCEPTION 'ScanMe runtime roles must not have administrative or RLS-bypass attributes';
+  END IF;
+END
+$$;
 
 GRANT USAGE ON SCHEMA public TO app_user, auth_user, visitor_user;
 
