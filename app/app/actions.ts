@@ -1,6 +1,6 @@
 'use server'
 
-import { and, eq } from 'drizzle-orm'
+import { and, eq, inArray } from 'drizzle-orm'
 import { revalidatePath } from 'next/cache'
 import { redirect } from 'next/navigation'
 import { z } from 'zod'
@@ -8,6 +8,7 @@ import { auth } from '@/lib/auth-server'
 import { headers } from 'next/headers'
 import { schema, withOwnerDb } from '@/lib/db'
 import { canGoLive, canSaveCampaign, type Mode, type Plan } from '@/lib/plans'
+import { personalCodeIds } from '@/lib/product'
 
 async function owner() {
   const session = await auth.api.getSession({ headers: await headers() })
@@ -61,8 +62,8 @@ export async function createCampaign(formData: FormData) {
   if (!parsed.success) return
   const created = await withOwnerDb(user.id, async (db) => {
     const [ownerRow] = await db.select().from(schema.users).where(eq(schema.users.id, user.id)).limit(1)
-    const [code] = await db.select().from(schema.codes).where(eq(schema.codes.userId, user.id)).limit(1)
-    const existing = await db.select({ id: schema.campaigns.id }).from(schema.campaigns).where(eq(schema.campaigns.userId, user.id))
+    const [code] = await db.select().from(schema.codes).where(and(eq(schema.codes.userId, user.id), eq(schema.codes.kind, 'personal'))).limit(1)
+    const existing = await db.select({ id: schema.campaigns.id }).from(schema.campaigns).where(and(eq(schema.campaigns.userId, user.id), inArray(schema.campaigns.codeId, personalCodeIds(user.id))))
     const gate = canSaveCampaign((ownerRow?.plan ?? 'free') as Plan, existing.length)
     if (!gate.ok || !code) return false
 
@@ -85,7 +86,7 @@ export async function publishCampaign(formData: FormData) {
     const [target] = await db.select().from(schema.campaigns).where(and(eq(schema.campaigns.id, campaignId), eq(schema.campaigns.userId, user.id))).limit(1)
     if (!target) return false
     const [ownerRow] = await db.select().from(schema.users).where(eq(schema.users.id, user.id)).limit(1)
-    const live = await db.select({ id: schema.campaigns.id }).from(schema.campaigns).where(and(eq(schema.campaigns.userId, user.id), eq(schema.campaigns.status, 'live')))
+    const live = await db.select({ id: schema.campaigns.id }).from(schema.campaigns).where(and(eq(schema.campaigns.userId, user.id), eq(schema.campaigns.status, 'live'), inArray(schema.campaigns.codeId, personalCodeIds(user.id))))
     const liveWithoutTarget = live.filter((item) => item.id !== target.id).length
     const gate = canGoLive((ownerRow?.plan ?? 'free') as Plan, liveWithoutTarget)
     if (!gate.ok) return false

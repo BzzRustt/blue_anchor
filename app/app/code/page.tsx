@@ -1,6 +1,6 @@
 import QRCode from 'qrcode'
 import Image from 'next/image'
-import { eq } from 'drizzle-orm'
+import { and, eq } from 'drizzle-orm'
 import { ArrowSquareOut, IdentificationCard, Power } from '@phosphor-icons/react/dist/ssr'
 import { toggleCode } from '@/app/app/actions'
 import { CopyLinkButton } from '@/components/workspace/CopyLinkButton'
@@ -10,7 +10,7 @@ import { requireOwner } from '@/lib/owner'
 
 export default async function CodePage() {
   const session = await requireOwner()
-  const [code] = await withOwnerDb(session.user.id, (db) => db.select().from(schema.codes).where(eq(schema.codes.userId, session.user.id)).limit(1))
+  const [code] = await withOwnerDb(session.user.id, (db) => db.select().from(schema.codes).where(and(eq(schema.codes.userId, session.user.id), eq(schema.codes.kind, 'personal'))).limit(1))
   const baseUrl = (process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3000').replace(/\/$/, '')
   const url = `${baseUrl}/t/${code.slug}`
   const qr = await QRCode.toDataURL(url, { width: 720, margin: 2, color: { dark: '#102018', light: '#ffffff' } })

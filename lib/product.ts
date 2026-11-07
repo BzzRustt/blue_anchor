@@ -26,6 +26,14 @@ export type VisitorExperience = {
   blocks: Array<Omit<typeof schema.questionBlocks.$inferSelect, 'config'> & { config: QuestionConfig }>
 }
 
+/**
+ * Subquery of a user's personal code ids. Event codes live in the same table, and every
+ * personal-product query that means "my code" or "my campaigns" must exclude them — an
+ * event must not consume the personal code, campaign or live-campaign quota.
+ */
+export const personalCodeIds = (userId: string) =>
+  sql`(select id from codes where user_id = ${userId} and kind = 'personal')`
+
 function createSlug(name: string) {
   const base = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 22) || 'hello'
   return `${base}-${crypto.randomBytes(3).toString('hex')}`
@@ -33,7 +41,12 @@ function createSlug(name: string) {
 
 export async function ensureOwnerSetup(userId: string, name: string) {
   return withOwnerDb(userId, async (db) => {
-    const [existingCode] = await db.select().from(schema.codes).where(eq(schema.codes.userId, userId)).limit(1)
+    // The workspace layout and the page both call this on a first visit, in parallel. Without
+    // serialising them each sees "no code yet" and creates one, leaving a new user with two
+    // personal codes (and over a free plan's one-code limit). The lock is per user and is
+    // released when the transaction ends.
+    await db.execute(sql`select pg_advisory_xact_lock(hashtext(${userId}))`)
+    const [existingCode] = await db.select().from(schema.codes).where(and(eq(schema.codes.userId, userId), eq(schema.codes.kind, 'personal'))).limit(1)
     let code = existingCode
 
     if (!code) {

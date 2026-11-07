@@ -3,6 +3,7 @@
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import {
+  CalendarCheck,
   ChartLineUp,
   ChatCircleDots,
   IdentificationCard,
@@ -14,6 +15,7 @@ import {
 const items = [
   { href: '/app/inbox', label: 'Inbox', icon: ChatCircleDots },
   { href: '/app/campaigns', label: 'Campaigns', icon: Megaphone },
+  { href: '/app/events', label: 'Events', icon: CalendarCheck },
   { href: '/app/insights', label: 'Insights', icon: ChartLineUp },
   { href: '/app/code', label: 'My code', icon: IdentificationCard },
   { href: '/app/shop', label: 'Shop', icon: Storefront },
@@ -24,7 +26,7 @@ export function WorkspaceNav({ mobile = false }: { mobile?: boolean }) {
   const pathname = usePathname()
 
   return (
-    <nav aria-label="Workspace" className={mobile ? 'grid grid-cols-6 gap-1 overflow-x-auto px-2 py-2' : 'grid gap-1.5'}>
+    <nav aria-label="Workspace" className={mobile ? 'grid grid-cols-7 gap-1 overflow-x-auto px-2 py-2' : 'grid gap-1.5'}>
       {items.map((item) => {
         const active = pathname === item.href || pathname.startsWith(`${item.href}/`)
         const Icon = item.icon

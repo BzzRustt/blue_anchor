@@ -1,4 +1,4 @@
-import { eq } from 'drizzle-orm'
+import { and, eq } from 'drizzle-orm'
 import { ArrowSquareOut, UserCircle } from '@phosphor-icons/react/dist/ssr'
 import { saveProfile } from '@/app/app/actions'
 import { SignOutButton } from '@/components/workspace/SignOutButton'
@@ -11,7 +11,7 @@ export default async function ProfilePage() {
   const { owner, code } = await withOwnerDb(session.user.id, async (db) => {
     const [[owner], [code]] = await Promise.all([
       db.select().from(schema.users).where(eq(schema.users.id, session.user.id)).limit(1),
-      db.select().from(schema.codes).where(eq(schema.codes.userId, session.user.id)).limit(1),
+      db.select().from(schema.codes).where(and(eq(schema.codes.userId, session.user.id), eq(schema.codes.kind, 'personal'))).limit(1),
     ])
     return { owner, code }
   })
