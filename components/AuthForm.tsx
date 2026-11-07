@@ -1,6 +1,7 @@
 'use client'
 
 import { ArrowRight, SpinnerGap } from '@phosphor-icons/react'
+import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { FormEvent, useState } from 'react'
 import { authClient } from '@/lib/auth-client'
@@ -32,5 +33,5 @@ export function AuthForm({ mode }: { mode: 'login' | 'signup' }) {
     router.refresh()
   }
 
-  return <form onSubmit={submit} className="grid gap-5">{mode === 'signup' && <label className="field-label">Name<input className="field-input" name="name" autoComplete="name" required maxLength={80} placeholder="Allen K." /></label>}<label className="field-label">Email<input className="field-input" type="email" name="email" autoComplete="email" required placeholder="you@example.com" /></label><label className="field-label">Password<input className="field-input" type="password" name="password" autoComplete={mode === 'signup' ? 'new-password' : 'current-password'} required minLength={8} placeholder="At least 8 characters" /></label>{error && <p role="alert" className="rounded-xl border border-[color-mix(in_srgb,var(--danger)_35%,var(--line))] bg-[color-mix(in_srgb,var(--danger)_8%,var(--surface))] p-3 text-sm text-[var(--danger)]">{error}</p>}<button className="action-primary mt-1" disabled={pending}>{pending ? <SpinnerGap className="animate-spin" size={18} weight="bold" /> : <ArrowRight size={18} weight="bold" />}{pending ? 'Please wait' : mode === 'signup' ? 'Create account' : 'Log in'}</button></form>
+  return <form onSubmit={submit} className="grid gap-5">{mode === 'signup' && <label className="field-label">Name<input className="field-input" name="name" autoComplete="name" required maxLength={80} placeholder="Allen K." /></label>}<label className="field-label">Email<input className="field-input" type="email" name="email" autoComplete="email" required placeholder="you@example.com" /></label><label className="field-label">Password<input className="field-input" type="password" name="password" autoComplete={mode === 'signup' ? 'new-password' : 'current-password'} required minLength={8} placeholder="At least 8 characters" /></label>{mode === 'login' && <Link className="-mt-2 w-fit text-sm font-bold text-[var(--accent-strong)]" href="/forgot-password">Forgot your password?</Link>}{error && <p role="alert" className="rounded-xl border border-[color-mix(in_srgb,var(--danger)_35%,var(--line))] bg-[color-mix(in_srgb,var(--danger)_8%,var(--surface))] p-3 text-sm text-[var(--danger)]">{error}</p>}<button className="action-primary mt-1" disabled={pending}>{pending ? <SpinnerGap className="animate-spin" size={18} weight="bold" /> : <ArrowRight size={18} weight="bold" />}{pending ? 'Please wait' : mode === 'signup' ? 'Create account' : 'Log in'}</button></form>
 }

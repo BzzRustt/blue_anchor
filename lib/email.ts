@@ -1,0 +1,129 @@
+/**
+ * Email transport.
+ *
+ * Resend's REST API over plain fetch — no SDK. Sending an email is one POST, and an SDK
+ * here would be a dependency to audit and upgrade forever in exchange for nothing.
+ *
+ * Every outbound email in the product routes through `sendEmail`, which is why the
+ * per-recipient throttle lives here rather than at each call site. Better Auth already
+ * rate-limits `/request-password-reset` per IP; that protects the service but not a single
+ * person's inbox, since a distributed flood uses a fresh IP each time. One guard at the
+ * only exit point covers password resets today and claim links, connect notifications and
+ * import invitations later, without anyone having to remember it.
+ */
+// Relative with an explicit extension so `node --test` can resolve it without the
+// tsconfig path alias, which bare Node does not read.
+import { RateLimiter } from './rate-limiter.ts'
+
+const ENDPOINT = 'https://api.resend.com/emails'
+
+/**
+ * ponytail: in-memory, so on serverless each instance keeps its own count and the real
+ * ceiling is 3 x instances per hour. Same trade-off as lib/rate-limiter.ts. Move both to
+ * a shared store when abuse is measured, not before.
+ */
+const recipientLimiter = new RateLimiter(3, 3_600_000)
+
+export type SendResult = 'sent' | 'rate_limited' | 'not_configured'
+
+export interface Email {
+  to: string
+  subject: string
+  text: string
+  html: string
+}
+
+/** Lets callers skip work that only makes sense if an email can actually leave. */
+export function emailConfigured(): boolean {
+  return Boolean(process.env.RESEND_API_KEY && process.env.EMAIL_FROM)
+}
+
+export async function sendEmail(email: Email): Promise<SendResult> {
+  const apiKey = process.env.RESEND_API_KEY
+  const from = process.env.EMAIL_FROM
+
+  if (!apiKey || !from) {
+    // Loud, because the alternative is a silent dead flow in production.
+    console.error('[email] RESEND_API_KEY or EMAIL_FROM is missing; not sending:', email.subject)
+    return 'not_configured'
+  }
+
+  const key = email.to.trim().toLowerCase()
+  if (recipientLimiter.isLimited(key)) return 'rate_limited'
+  recipientLimiter.increment(key)
+
+  const response = await fetch(ENDPOINT, {
+    method: 'POST',
+    headers: {
+      authorization: `Bearer ${apiKey}`,
+      'content-type': 'application/json',
+    },
+    body: JSON.stringify({
+      from,
+      to: [email.to],
+      subject: email.subject,
+      text: email.text,
+      html: email.html,
+    }),
+  })
+
+  if (!response.ok) {
+    const detail = await response.text().catch(() => '')
+    throw new Error(`Resend rejected the email (${response.status}): ${detail.slice(0, 300)}`)
+  }
+
+  return 'sent'
+}
+
+/* ── Templates ────────────────────────────────────────────────────────────────
+ * Kept as pure functions returning subject/text/html so they are testable without a
+ * network, and so the plain-text part is never an afterthought.
+ */
+
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+}
+
+function layout(heading: string, body: string, action?: { label: string; url: string }): string {
+  const button = action
+    ? `<p style="margin:28px 0"><a href="${escapeHtml(action.url)}" style="background:#111;color:#fff;border-radius:12px;padding:13px 22px;font-weight:700;text-decoration:none;display:inline-block">${escapeHtml(action.label)}</a></p>`
+    : ''
+  return `<!doctype html><html><body style="margin:0;background:#f6f6f4;padding:28px;font:16px/1.6 -apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;color:#111">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr><td align="center">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:520px;background:#fff;border-radius:18px;padding:32px">
+<tr><td>
+<p style="margin:0 0 20px;font-weight:800;letter-spacing:-.03em;font-size:19px">ScanMe</p>
+<h1 style="margin:0 0 14px;font-size:25px;letter-spacing:-.04em">${escapeHtml(heading)}</h1>
+${body}
+${button}
+</td></tr></table>
+</td></tr></table>
+</body></html>`
+}
+
+export function resetPasswordEmail(name: string | null | undefined, url: string): Omit<Email, 'to'> {
+  const greeting = name?.trim() ? `Hi ${name.trim()},` : 'Hi,'
+  return {
+    subject: 'Reset your ScanMe password',
+    text: `${greeting}
+
+Use this link to choose a new password:
+
+${url}
+
+The link works once and expires in an hour. If you did not ask for it, ignore this email — your password stays as it is.
+
+— ScanMe`,
+    html: layout(
+      'Reset your password',
+      `<p style="margin:0 0 14px">${escapeHtml(greeting)}</p>
+<p style="margin:0">Choose a new password with the button below. The link works once and expires in an hour.</p>
+<p style="margin:16px 0 0;color:#666;font-size:14px">If you did not ask for this, ignore this email — your password stays as it is.</p>`,
+      { label: 'Choose a new password', url }
+    ),
+  }
+}

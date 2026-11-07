@@ -1,6 +1,7 @@
 import { betterAuth } from 'better-auth/minimal'
 import { drizzleAdapter } from 'better-auth/adapters/drizzle'
 import { authDb, schema } from '@/lib/db'
+import { resetPasswordEmail, sendEmail } from '@/lib/email'
 
 const secret = process.env.BETTER_AUTH_SECRET ?? process.env.SESSION_SECRET
 
@@ -38,6 +39,26 @@ export const auth = betterAuth({
   emailAndPassword: {
     enabled: true,
     minPasswordLength: 8,
+    resetPasswordTokenExpiresIn: 3600,
+    /**
+     * Failures are swallowed on purpose.
+     *
+     * /request-password-reset answers "if this email exists, check your inbox" for both a
+     * real and an unknown address, which is what keeps it from confirming who has an
+     * account. If a transport error escaped here the endpoint would return 200 for an
+     * unknown address and 500 for a real one, turning the send into an account-existence
+     * oracle. So this logs and returns; the caller is told the same thing either way.
+     */
+    sendResetPassword: async ({ user, url }) => {
+      try {
+        const result = await sendEmail({ to: user.email, ...resetPasswordEmail(user.name, url) })
+        if (result !== 'sent') {
+          console.warn(`[auth] password reset email for user ${user.id} was ${result}`)
+        }
+      } catch (error) {
+        console.error(`[auth] password reset email failed for user ${user.id}:`, error)
+      }
+    },
   },
   session: {
     expiresIn: 60 * 60 * 24 * 14,

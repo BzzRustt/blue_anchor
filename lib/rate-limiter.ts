@@ -5,11 +5,16 @@ interface Entry {
 
 export class RateLimiter {
   private readonly map = new Map<string, Entry>()
+  private readonly max: number
+  private readonly windowMs: number
 
-  constructor(
-    private readonly max: number,
-    private readonly windowMs: number
-  ) {}
+  // Assigned in the body rather than as constructor parameter properties: those need a
+  // TypeScript codegen step, and Node's strip-only mode rejects them, which would make
+  // this file — and every file importing it — impossible to run under `node --test`.
+  constructor(max: number, windowMs: number) {
+    this.max = max
+    this.windowMs = windowMs
+  }
 
   isLimited(key: string): boolean {
     const now = Date.now()
