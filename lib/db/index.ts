@@ -40,4 +40,36 @@ export async function withOwnerDb<T>(
   })
 }
 
+/**
+ * An attendee acting on their own event record — editing their card, sending a connect
+ * request, reacting to someone else's card.
+ *
+ * Runs as the anonymous visitor role, so it can never reach owner data. The attendee id
+ * must already have been proven from their signed edit token; it is installed as a
+ * transaction-local claim that `public.current_attendee_id()` reads, and the policies in
+ * lib/db/rls.sql compare it per row. That is what stops an application bug from letting
+ * one attendee overwrite another's profile.
+ *
+ * Directory *reads* do not need this — they are governed by the event's visibility
+ * window and should use `visitorDb` directly.
+ */
+const attendeePool = new Pool({ connectionString: connection('VISITOR_DATABASE_URL') })
+const attendeeDb = drizzleServerless(attendeePool, { schema })
+type AttendeeTransaction = Parameters<Parameters<typeof attendeeDb.transaction>[0]>[0]
+
+export async function withAttendeeDb<T>(
+  attendeeId: string,
+  work: (tx: AttendeeTransaction) => Promise<T>
+): Promise<T> {
+  if (!attendeeId) {
+    throw new Error('A verified attendee id is required for an attendee database transaction.')
+  }
+
+  return attendeeDb.transaction(async (tx) => {
+    const claims = JSON.stringify({ attendee: attendeeId })
+    await tx.execute(sql`select set_config('request.jwt.claims', ${claims}, true)`)
+    return work(tx)
+  })
+}
+
 export { schema }

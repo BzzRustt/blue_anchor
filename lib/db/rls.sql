@@ -293,3 +293,234 @@ CREATE POLICY scans_visitor_record ON scans
         AND ca.status = 'live'
     )
   );
+
+-- ===========================================================================
+-- Events layer
+--
+-- Added alongside the personal product. No policy above is modified.
+--
+-- Two identities reach these tables:
+--   * app_user      — the signed-in organiser, identified by auth.user_id()
+--   * visitor_user   — an anonymous attendee. For reads, the gate is the event's own
+--                      visibility window. For writes to their OWN profile, the app
+--                      installs a transaction-local attendee claim (see
+--                      lib/db/index.ts -> withAttendeeDb) and the policy below compares
+--                      it per row, so a bug in the application cannot let one attendee
+--                      overwrite another's card.
+--
+-- The access code is a low-entropy speed bump, not a secret: it is printed on every
+-- badge and shown on a slide. It keeps the directory out of random crawlers' hands,
+-- nothing more. It is only ever used inside a WHERE predicate, never selected.
+-- ===========================================================================
+
+GRANT SELECT, INSERT, UPDATE, DELETE ON
+  events, event_attendees, event_lookups, connection_requests, reactions
+TO app_user;
+
+-- Attendees resolve an event and verify its access code. access_code is readable only
+-- so it can be compared in a predicate.
+GRANT SELECT (id, code_id, campaign_id, name, venue, starts_at, ends_at,
+              access_code, role_set, directory_expires_at)
+  ON events TO visitor_user;
+
+-- The attendee's public card. email, claim_token and claimed_user_id are deliberately
+-- absent: the directory must never be able to read them.
+GRANT SELECT (id, event_id, tag, role_letter, display_name, answers, visibility, status)
+  ON event_attendees TO visitor_user;
+GRANT INSERT (event_id, tag, role_letter, display_name, email, answers, visibility, source, status)
+  ON event_attendees TO visitor_user;
+GRANT UPDATE (display_name, answers, visibility, status, updated_at)
+  ON event_attendees TO visitor_user;
+
+GRANT INSERT (event_id, target_attendee_id, viewer_attendee_id, session_token)
+  ON event_lookups TO visitor_user;
+GRANT INSERT (event_id, from_attendee_id, to_attendee_id) ON connection_requests TO visitor_user;
+GRANT SELECT (id, event_id, from_attendee_id, to_attendee_id) ON connection_requests TO visitor_user;
+GRANT INSERT (event_id, attendee_id, from_attendee_id, kind) ON reactions TO visitor_user;
+GRANT SELECT (id, event_id, attendee_id, from_attendee_id, kind) ON reactions TO visitor_user;
+
+ALTER TABLE events              ENABLE ROW LEVEL SECURITY;
+ALTER TABLE event_attendees     ENABLE ROW LEVEL SECURITY;
+ALTER TABLE event_lookups       ENABLE ROW LEVEL SECURITY;
+ALTER TABLE connection_requests ENABLE ROW LEVEL SECURITY;
+ALTER TABLE reactions           ENABLE ROW LEVEL SECURITY;
+
+ALTER TABLE events              FORCE ROW LEVEL SECURITY;
+ALTER TABLE event_attendees     FORCE ROW LEVEL SECURITY;
+ALTER TABLE event_lookups       FORCE ROW LEVEL SECURITY;
+ALTER TABLE connection_requests FORCE ROW LEVEL SECURITY;
+ALTER TABLE reactions           FORCE ROW LEVEL SECURITY;
+
+-- --------------------------------------------------------------------------
+-- Organiser. Every row is reached through events.user_id.
+-- --------------------------------------------------------------------------
+
+DROP POLICY IF EXISTS events_organiser ON events;
+CREATE POLICY events_organiser ON events TO app_user
+  USING (user_id = auth.user_id())
+  WITH CHECK (user_id = auth.user_id());
+
+DROP POLICY IF EXISTS event_attendees_organiser ON event_attendees;
+CREATE POLICY event_attendees_organiser ON event_attendees TO app_user
+  USING (EXISTS (
+    SELECT 1 FROM events e
+    WHERE e.id = event_attendees.event_id AND e.user_id = auth.user_id()
+  ))
+  WITH CHECK (EXISTS (
+    SELECT 1 FROM events e
+    WHERE e.id = event_attendees.event_id AND e.user_id = auth.user_id()
+  ));
+
+DROP POLICY IF EXISTS event_lookups_organiser ON event_lookups;
+CREATE POLICY event_lookups_organiser ON event_lookups TO app_user
+  USING (EXISTS (
+    SELECT 1 FROM events e
+    WHERE e.id = event_lookups.event_id AND e.user_id = auth.user_id()
+  ))
+  WITH CHECK (EXISTS (
+    SELECT 1 FROM events e
+    WHERE e.id = event_lookups.event_id AND e.user_id = auth.user_id()
+  ));
+
+DROP POLICY IF EXISTS connection_requests_organiser ON connection_requests;
+CREATE POLICY connection_requests_organiser ON connection_requests TO app_user
+  USING (EXISTS (
+    SELECT 1 FROM events e
+    WHERE e.id = connection_requests.event_id AND e.user_id = auth.user_id()
+  ))
+  WITH CHECK (EXISTS (
+    SELECT 1 FROM events e
+    WHERE e.id = connection_requests.event_id AND e.user_id = auth.user_id()
+  ));
+
+DROP POLICY IF EXISTS reactions_organiser ON reactions;
+CREATE POLICY reactions_organiser ON reactions TO app_user
+  USING (EXISTS (
+    SELECT 1 FROM events e
+    WHERE e.id = reactions.event_id AND e.user_id = auth.user_id()
+  ))
+  WITH CHECK (EXISTS (
+    SELECT 1 FROM events e
+    WHERE e.id = reactions.event_id AND e.user_id = auth.user_id()
+  ));
+
+-- --------------------------------------------------------------------------
+-- Anonymous attendees.
+-- --------------------------------------------------------------------------
+
+-- The directory is readable only while the event's code is live and the 48-hour
+-- window has not closed. Once directory_expires_at passes, every read below
+-- returns nothing — expiry is enforced here, not only in application code.
+CREATE OR REPLACE FUNCTION public.event_directory_open(event_id uuid)
+RETURNS boolean
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT EXISTS (
+    SELECT 1
+    FROM events e
+    JOIN codes c ON c.id = e.code_id
+    WHERE e.id = event_id
+      AND c.is_live
+      AND now() < e.directory_expires_at
+  );
+$$;
+
+REVOKE ALL ON FUNCTION public.event_directory_open(uuid) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.event_directory_open(uuid) TO app_user, visitor_user;
+
+-- The attendee id the application has verified for this transaction, or NULL.
+--
+-- This sits on a security boundary, so it must never raise: a malformed, empty or
+-- absent claim has to return NULL and let the policy deny cleanly. An earlier version
+-- cast straight to jsonb and threw on an unset claim, which turned an anonymous write
+-- into a 500 instead of a refusal. pg_input_is_valid (Postgres 16+) guards both casts.
+CREATE OR REPLACE FUNCTION public.current_attendee_id()
+RETURNS uuid
+LANGUAGE sql
+STABLE
+AS $$
+  WITH raw AS (
+    SELECT nullif(current_setting('request.jwt.claims', true), '') AS claims
+  ),
+  parsed AS (
+    SELECT CASE
+             WHEN claims IS NOT NULL AND pg_input_is_valid(claims, 'jsonb')
+               THEN (claims::jsonb) ->> 'attendee'
+           END AS attendee
+    FROM raw
+  )
+  SELECT CASE
+           WHEN attendee IS NOT NULL AND pg_input_is_valid(attendee, 'uuid')
+             THEN attendee::uuid
+         END
+  FROM parsed;
+$$;
+
+REVOKE ALL ON FUNCTION public.current_attendee_id() FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.current_attendee_id() TO visitor_user;
+
+DROP POLICY IF EXISTS events_visitor_open ON events;
+CREATE POLICY events_visitor_open ON events
+  FOR SELECT TO visitor_user
+  USING (public.event_directory_open(id));
+
+-- Only completed cards appear, and only while the directory is open.
+DROP POLICY IF EXISTS event_attendees_visitor_directory ON event_attendees;
+CREATE POLICY event_attendees_visitor_directory ON event_attendees
+  FOR SELECT TO visitor_user
+  USING (status = 'complete' AND public.event_directory_open(event_id));
+
+-- Self-registration, bounded to an open event.
+DROP POLICY IF EXISTS event_attendees_visitor_join ON event_attendees;
+CREATE POLICY event_attendees_visitor_join ON event_attendees
+  FOR INSERT TO visitor_user
+  WITH CHECK (public.event_directory_open(event_id));
+
+-- Editing a card requires a verified attendee claim for that exact row, so an
+-- application bug cannot let one attendee overwrite another's profile.
+DROP POLICY IF EXISTS event_attendees_visitor_self_edit ON event_attendees;
+CREATE POLICY event_attendees_visitor_self_edit ON event_attendees
+  FOR UPDATE TO visitor_user
+  USING (id = public.current_attendee_id() AND public.event_directory_open(event_id))
+  WITH CHECK (id = public.current_attendee_id() AND public.event_directory_open(event_id));
+
+DROP POLICY IF EXISTS event_lookups_visitor_record ON event_lookups;
+CREATE POLICY event_lookups_visitor_record ON event_lookups
+  FOR INSERT TO visitor_user
+  WITH CHECK (public.event_directory_open(event_id));
+
+-- A connect request must come from the verified attendee making it.
+DROP POLICY IF EXISTS connection_requests_visitor_send ON connection_requests;
+CREATE POLICY connection_requests_visitor_send ON connection_requests
+  FOR INSERT TO visitor_user
+  WITH CHECK (
+    from_attendee_id = public.current_attendee_id()
+    AND from_attendee_id <> to_attendee_id
+    AND public.event_directory_open(event_id)
+  );
+
+-- An attendee sees only the requests they sent. Received requests are delivered by
+-- email and, after claiming, through the owner workspace.
+DROP POLICY IF EXISTS connection_requests_visitor_own ON connection_requests;
+CREATE POLICY connection_requests_visitor_own ON connection_requests
+  FOR SELECT TO visitor_user
+  USING (from_attendee_id = public.current_attendee_id());
+
+DROP POLICY IF EXISTS reactions_visitor_send ON reactions;
+CREATE POLICY reactions_visitor_send ON reactions
+  FOR INSERT TO visitor_user
+  WITH CHECK (
+    from_attendee_id = public.current_attendee_id()
+    AND from_attendee_id <> attendee_id
+    AND public.event_directory_open(event_id)
+  );
+
+-- Reaction counts stay private to the recipient: an attendee can read only the
+-- reactions they themselves gave, never the tally on someone else's card.
+DROP POLICY IF EXISTS reactions_visitor_own ON reactions;
+CREATE POLICY reactions_visitor_own ON reactions
+  FOR SELECT TO visitor_user
+  USING (from_attendee_id = public.current_attendee_id());

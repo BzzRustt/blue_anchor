@@ -24,6 +24,25 @@ import {
 
 export const planEnum = pgEnum('plan', ['free', 'pro', 'studio'])
 
+/** Distinguishes a person's permanent code from an event directory's permanent code. */
+export const codeKindEnum = pgEnum('code_kind', ['personal', 'event'])
+
+/** Where an attendee record came from. Four doors, one profile. */
+export const attendeeSourceEnum = pgEnum('attendee_source', [
+  'native',
+  'import',
+  'embedded',
+  'walk_up',
+])
+
+export const attendeeStatusEnum = pgEnum('attendee_status', [
+  'invited',
+  'complete',
+  'withdrawn',
+])
+
+export const reactionKindEnum = pgEnum('reaction_kind', ['like', 'applaud'])
+
 export const modeEnum = pgEnum('mode', [
   'private',
   'networking',
@@ -173,6 +192,13 @@ export const codes = pgTable(
       .references(() => users.id, { onDelete: 'cascade' }),
     slug: text('slug').notNull().unique(),
     label: text('label'),
+    /**
+     * A personal code belongs to one person; an event code is the permanent URL for an
+     * event directory. Both are permanent slugs pointing at a swappable campaign, so they
+     * share this table — but plan metering must tell them apart, because an event must not
+     * bill against someone's personal code quota.
+     */
+    kind: codeKindEnum('kind').notNull().default('personal'),
     /** The kill switch. False takes the code offline everywhere, instantly, no reprint. */
     isLive: boolean('is_live').notNull().default(true),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
@@ -397,4 +423,173 @@ export const orders = pgTable(
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [index('orders_user_idx').on(t.userId)]
+)
+
+/* ───────────────────────── Events layer ─────────────────────────────────────
+ *
+ * Added on top of the personal product, not instead of it. An event reuses the
+ * existing spine: it owns a `codes` row (kind='event') for its permanent URL, and a
+ * `campaigns` row (mode='event') whose `question_blocks` are the questions every
+ * attendee answers about themselves.
+ *
+ * The one inversion to keep in mind: in the personal product a visitor's answers are
+ * private to the owner. Here an attendee's answers ARE their public card inside the
+ * event. That is why attendee answers live in `eventAttendees` rather than `responses`
+ * — the existing `responses_owner` policy (user_id = auth.user_id()) is right for
+ * private feedback and wrong for a shared directory, and must not be rewritten.
+ */
+
+export const events = pgTable(
+  'events',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    /** The organiser. */
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    /** Permanent event URL. Reusable year to year; `codes.isLive` is the kill switch. */
+    codeId: uuid('code_id')
+      .notNull()
+      .references(() => codes.id, { onDelete: 'cascade' }),
+    /** Holds the event's question set via its question_blocks. */
+    campaignId: uuid('campaign_id')
+      .notNull()
+      .references(() => campaigns.id, { onDelete: 'cascade' }),
+    name: text('name').notNull(),
+    venue: text('venue'),
+    startsAt: timestamp('starts_at', { withTimezone: true }).notNull(),
+    endsAt: timestamp('ends_at', { withTimezone: true }).notNull(),
+    /** Short code on the badge and the welcome slide. Gates the directory. */
+    accessCode: text('access_code').notNull(),
+    /**
+     * Role letters shown on badges, e.g. [{"letter":"F","label":"Founder"}, …].
+     * The letter makes role legible across a room with no lookup at all.
+     */
+    roleSet: jsonb('role_set').notNull().default([]),
+    /** When the directory goes dark for attendees. Usually endsAt + 48h. */
+    directoryExpiresAt: timestamp('directory_expires_at', { withTimezone: true }).notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index('events_user_idx').on(t.userId),
+    uniqueIndex('events_code_unique').on(t.codeId),
+  ]
+)
+
+/**
+ * One attendee at one event.
+ *
+ * Deliberately NOT a `users` row until they claim an account: it keeps the auth tables
+ * clean and makes expiry trivial, with no orphan accounts to collect.
+ */
+export const eventAttendees = pgTable(
+  'event_attendees',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    eventId: uuid('event_id')
+      .notNull()
+      .references(() => events.id, { onDelete: 'cascade' }),
+    /** What is printed on the badge: "F-042", or "042" for a single-cohort event. */
+    tag: text('tag').notNull(),
+    /** The role half of the tag, kept separate so the directory can filter on it. */
+    roleLetter: text('role_letter'),
+    displayName: text('display_name').notNull(),
+    /** Never exposed to the directory. visitor_user has no column grant on this. */
+    email: text('email'),
+    /** Answers keyed by question_blocks.id — this is the attendee's public card. */
+    answers: jsonb('answers').notNull().default({}),
+    /**
+     * Per-field visibility, so an in-demand attendee can narrow their card. Investors
+     * get approached by everyone; founders want to be found. Same product, different
+     * defaults, or the scarce people disengage and take the event's draw with them.
+     */
+    visibility: jsonb('visibility').notNull().default({}),
+    source: attendeeSourceEnum('source').notNull().default('native'),
+    status: attendeeStatusEnum('status').notNull().default('invited'),
+    /** Set once they claim an account; their connections then survive expiry. */
+    claimedUserId: text('claimed_user_id').references(() => users.id, { onDelete: 'set null' }),
+    /** Single-use token for the claim link emailed after the event. */
+    claimToken: text('claim_token'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('event_attendees_tag_unique').on(t.eventId, t.tag),
+    index('event_attendees_event_idx').on(t.eventId),
+    index('event_attendees_claimed_idx').on(t.claimedUserId),
+  ]
+)
+
+/** Who looked up whom. Vanity metric in the personal product; the report here. */
+export const eventLookups = pgTable(
+  'event_lookups',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    eventId: uuid('event_id')
+      .notNull()
+      .references(() => events.id, { onDelete: 'cascade' }),
+    targetAttendeeId: uuid('target_attendee_id')
+      .notNull()
+      .references(() => eventAttendees.id, { onDelete: 'cascade' }),
+    /** Null when the viewer has not identified themselves as an attendee. */
+    viewerAttendeeId: uuid('viewer_attendee_id').references(() => eventAttendees.id, {
+      onDelete: 'set null',
+    }),
+    sessionToken: text('session_token').notNull(),
+    lookedUpAt: timestamp('looked_up_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index('event_lookups_report_idx').on(t.eventId, t.lookedUpAt.desc())]
+)
+
+/** One tap shares your card. No free text, so no moderation surface on day one. */
+export const connectionRequests = pgTable(
+  'connection_requests',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    eventId: uuid('event_id')
+      .notNull()
+      .references(() => events.id, { onDelete: 'cascade' }),
+    fromAttendeeId: uuid('from_attendee_id')
+      .notNull()
+      .references(() => eventAttendees.id, { onDelete: 'cascade' }),
+    toAttendeeId: uuid('to_attendee_id')
+      .notNull()
+      .references(() => eventAttendees.id, { onDelete: 'cascade' }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('connection_requests_once').on(t.eventId, t.fromAttendeeId, t.toAttendeeId),
+    index('connection_requests_to_idx').on(t.toAttendeeId),
+  ]
+)
+
+/**
+ * Reactions on an attendee's card.
+ *
+ * Counts stay private to the recipient in v1: public counts turn the directory into a
+ * popularity contest and quietly punish whoever sits at zero. They also make the better
+ * claim hook — "7 people applauded your profile, claim your account to see who".
+ */
+export const reactions = pgTable(
+  'reactions',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    eventId: uuid('event_id')
+      .notNull()
+      .references(() => events.id, { onDelete: 'cascade' }),
+    /** The card being reacted to. */
+    attendeeId: uuid('attendee_id')
+      .notNull()
+      .references(() => eventAttendees.id, { onDelete: 'cascade' }),
+    fromAttendeeId: uuid('from_attendee_id')
+      .notNull()
+      .references(() => eventAttendees.id, { onDelete: 'cascade' }),
+    kind: reactionKindEnum('kind').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('reactions_once').on(t.eventId, t.attendeeId, t.fromAttendeeId, t.kind),
+    index('reactions_attendee_idx').on(t.attendeeId),
+  ]
 )

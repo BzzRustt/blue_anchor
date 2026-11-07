@@ -5,13 +5,20 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
+  DIRECTORY_WINDOW_HOURS,
   PLAN_LIMITS,
+  canAddAttendee,
   canAddBlock,
   canAddSocialLink,
   canCreateCode,
+  canCreateEvent,
   canEnableMode,
+  canExportEventReport,
   canGoLive,
   canReply,
+  canUseRoleLetters,
+  directoryExpiresAt,
+  eventActivityLimit,
   historyCutoff,
   planAtLeast,
   responseVolumeLimit,
@@ -112,4 +119,51 @@ test('plan ranking is ordered', () => {
   assert.equal(planAtLeast('free', 'pro'), false)
   assert.equal(planAtLeast('pro', 'pro'), true)
   assert.equal(planAtLeast('studio', 'pro'), true)
+})
+
+/* ── Events layer ───────────────────────────────────────────────────────────── */
+
+test('events per year are capped per plan', () => {
+  assert.equal(canCreateEvent('free', 1).ok, true)
+  assert.equal(canCreateEvent('free', 2).ok, false, 'free stops at 2 events a year')
+  assert.equal(canCreateEvent('pro', 11).ok, true)
+  assert.equal(canCreateEvent('pro', 12).ok, false)
+  assert.equal(canCreateEvent('studio', 999).ok, true, 'studio is unlimited')
+})
+
+test('attendees per event are capped per plan, and the message names the ceiling', () => {
+  assert.equal(canAddAttendee('free', 49).ok, true)
+  const gate = canAddAttendee('free', 50)
+  assert.equal(gate.ok, false)
+  assert.match(gate.ok === false ? gate.reason : '', /50 attendees/)
+  assert.equal(gate.ok === false && gate.upgradeTo, 'pro')
+  assert.equal(canAddAttendee('pro', 149).ok, true)
+  assert.equal(canAddAttendee('pro', 150).ok, false)
+  assert.equal(canAddAttendee('studio', 499).ok, true)
+  assert.equal(canAddAttendee('studio', 500).ok, false)
+})
+
+test('event activity is never capped — never bill for the product working', () => {
+  assert.equal(eventActivityLimit(), null)
+})
+
+test('role letters and report export are pro features', () => {
+  assert.equal(canUseRoleLetters('free').ok, false)
+  assert.equal(canUseRoleLetters('pro').ok, true)
+  assert.equal(canExportEventReport('free').ok, false)
+  assert.equal(canExportEventReport('studio').ok, true)
+})
+
+test('the directory window is 48 hours past the end of the event', () => {
+  assert.equal(DIRECTORY_WINDOW_HOURS, 48)
+  const ends = new Date('2026-11-20T21:00:00Z')
+  assert.equal(directoryExpiresAt(ends).toISOString(), '2026-11-22T21:00:00.000Z')
+})
+
+test('free tier can still run a real small event end to end', () => {
+  // A free organiser must be able to run one 50-person meetup without paying,
+  // because small meetups are the distribution channel.
+  assert.equal(canCreateEvent('free', 0).ok, true)
+  assert.equal(canAddAttendee('free', 0).ok, true)
+  assert.equal(canAddAttendee('free', 49).ok, true)
 })

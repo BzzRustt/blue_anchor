@@ -57,6 +57,19 @@ export interface PlanLimits {
   customSlug: boolean
   customDomain: boolean
   webhooks: boolean
+
+  /* ── Events layer ──────────────────────────────────────────────────────────
+   * Metered separately from the personal product: organisers pay per event, and
+   * an event code must never consume someone's personal code quota.
+   */
+  /** Events an organiser may run per calendar year. */
+  eventsPerYear: number
+  /** Attendees a single event may hold. The headline number organisers price on. */
+  attendeesPerEvent: number
+  /** Export attendees and the post-event report as CSV. */
+  eventReportExport: boolean
+  /** Organiser-defined role letters (F/I/M/…) rather than plain numbers. */
+  eventRoleLetters: boolean
 }
 
 export const PLAN_LIMITS: Record<Plan, PlanLimits> = {
@@ -78,6 +91,10 @@ export const PLAN_LIMITS: Record<Plan, PlanLimits> = {
     customSlug: false,
     customDomain: false,
     webhooks: false,
+    eventsPerYear: 2,
+    attendeesPerEvent: 50,
+    eventReportExport: false,
+    eventRoleLetters: false,
   },
   pro: {
     codes: 3,
@@ -97,6 +114,10 @@ export const PLAN_LIMITS: Record<Plan, PlanLimits> = {
     customSlug: true,
     customDomain: false,
     webhooks: false,
+    eventsPerYear: 12,
+    attendeesPerEvent: 150,
+    eventReportExport: true,
+    eventRoleLetters: true,
   },
   studio: {
     codes: 25,
@@ -116,6 +137,10 @@ export const PLAN_LIMITS: Record<Plan, PlanLimits> = {
     customSlug: true,
     customDomain: true,
     webhooks: true,
+    eventsPerYear: Infinity,
+    attendeesPerEvent: 500,
+    eventReportExport: true,
+    eventRoleLetters: true,
   },
 }
 
@@ -235,5 +260,66 @@ export function historyCutoff(plan: Plan, now: Date = new Date()): Date | null {
 
 /** Monthly response volume is never capped. Kept as a function so it reads as a decision. */
 export function responseVolumeLimit(): null {
+  return null
+}
+
+/* ── Events layer gates ──────────────────────────────────────────────────────── */
+
+export function canCreateEvent(plan: Plan, eventsThisYear: number): Gate {
+  const max = planLimits(plan).eventsPerYear
+  if (eventsThisYear >= max) {
+    return deny(
+      `The ${plan} plan allows ${max} event${max === 1 ? '' : 's'} per year.`,
+      plan === 'free' ? 'pro' : plan === 'pro' ? 'studio' : undefined
+    )
+  }
+  return allow
+}
+
+/**
+ * Attendee headroom for one event.
+ *
+ * This is the number organisers price on, so the message names the ceiling rather than
+ * just refusing. Note it caps attendees an event may *hold* — never the lookups,
+ * searches or connections they generate, for the same reason response volume is
+ * uncapped: never bill someone for the product working.
+ */
+export function canAddAttendee(plan: Plan, currentAttendeeCount: number): Gate {
+  const max = planLimits(plan).attendeesPerEvent
+  if (currentAttendeeCount >= max) {
+    return deny(
+      `The ${plan} plan allows ${max} attendees per event.`,
+      plan === 'free' ? 'pro' : plan === 'pro' ? 'studio' : undefined
+    )
+  }
+  return allow
+}
+
+export function canUseRoleLetters(plan: Plan): Gate {
+  return planLimits(plan).eventRoleLetters
+    ? allow
+    : deny('Role letters on badges need the pro plan.', 'pro')
+}
+
+export function canExportEventReport(plan: Plan): Gate {
+  return planLimits(plan).eventReportExport
+    ? allow
+    : deny('Exporting the event report needs the pro plan.', 'pro')
+}
+
+/**
+ * When an event's directory goes dark: the end of the event plus 48 hours.
+ *
+ * Attendees shared for a room, not forever. The window is also the conversion moment —
+ * claiming an account is what keeps the connections someone made.
+ */
+export const DIRECTORY_WINDOW_HOURS = 48
+
+export function directoryExpiresAt(endsAt: Date): Date {
+  return new Date(endsAt.getTime() + DIRECTORY_WINDOW_HOURS * 3_600_000)
+}
+
+/** Lookups, searches, connections and reactions are never capped. */
+export function eventActivityLimit(): null {
   return null
 }

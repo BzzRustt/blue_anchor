@@ -57,7 +57,7 @@ const tables = await admin`
   ORDER BY c.relname
 `
 
-check('15 application tables exist', tables.length === 15, `found ${tables.length}`)
+check('20 application tables exist', tables.length === 20, `found ${tables.length}`)
 check(
   'RLS is enabled and forced on every application table',
   tables.every((table) => table.relrowsecurity && table.relforcerowsecurity),
@@ -218,9 +218,194 @@ await admin`DELETE FROM codes WHERE id = ${codeA.id}`
 const afterCodeDelete = await admin`SELECT count(*)::int AS n FROM responses WHERE user_id = ${USER_A}`
 check('deleting a code cascades its responses', afterCodeDelete[0].n === 0, `${afterCodeDelete[0].n} remaining`)
 
+// ───────────────────────── Events layer ──────────────────────────────────────
+//
+// Two organisers, two events. The single-tenant shape of the checks above cannot
+// see a missing owner predicate, which is the bug class that reached main once
+// already (docs/CODE_REVIEW-2026-10-12.md, finding 2).
+
+const claims = (userId: string) => JSON.stringify({ sub: userId, role: 'authenticated' })
+const attendeeClaims = (attendeeId: string) => JSON.stringify({ attendee: attendeeId })
+
+async function seedEvent(userId: string, slug: string, name: string, expiresIn: string) {
+  const [code] = await admin`
+    INSERT INTO codes (user_id, slug, kind) VALUES (${userId}, ${slug}, 'event') RETURNING id
+  `
+  const [campaign] = await admin`
+    INSERT INTO campaigns (user_id, code_id, mode, name, status)
+    VALUES (${userId}, ${code.id}, 'event', ${name}, 'live') RETURNING id
+  `
+  const [event] = await admin`
+    INSERT INTO events (user_id, code_id, campaign_id, name, starts_at, ends_at,
+                        access_code, directory_expires_at)
+    VALUES (${userId}, ${code.id}, ${campaign.id}, ${name}, now() - interval '1 day',
+            now(), 'LETMEIN', now() + ${expiresIn}::interval)
+    RETURNING id
+  `
+  return { codeId: code.id, campaignId: campaign.id, eventId: event.id }
+}
+
+const eventA = await seedEvent(USER_A, 'verify-event-a', 'Event A', '2 days')
+const eventB = await seedEvent(USER_B, 'verify-event-b', 'Event B', '2 days')
+
+const [attendeeA1] = await admin`
+  INSERT INTO event_attendees (event_id, tag, role_letter, display_name, email, answers, status)
+  VALUES (${eventA.eventId}, 'F-001', 'F', 'Ada Founder', 'ada@example.test',
+          '{"looking_for":"pre-seed investors"}'::jsonb, 'complete')
+  RETURNING id
+`
+const [attendeeA2] = await admin`
+  INSERT INTO event_attendees (event_id, tag, role_letter, display_name, email, status)
+  VALUES (${eventA.eventId}, 'I-001', 'I', 'Ivan Investor', 'ivan@example.test', 'complete')
+  RETURNING id
+`
+await admin`
+  INSERT INTO event_attendees (event_id, tag, display_name, email, status)
+  VALUES (${eventB.eventId}, 'F-001', 'Bea Founder', 'bea@example.test', 'complete')
+`
+
+check(
+  'the same tag may be reused across different events',
+  true,
+  'F-001 exists in both A and B'
+)
+
+const dupTagRejected = await isRejected(() => admin`
+  INSERT INTO event_attendees (event_id, tag, display_name, status)
+  VALUES (${eventA.eventId}, 'F-001', 'Duplicate', 'complete')
+`)
+check('a duplicate tag within one event is rejected', dupTagRejected)
+
+// Organiser isolation.
+const [, ownEvents, otherEvents, otherAttendees] = await app.transaction([
+  app`SELECT set_config('request.jwt.claims', ${claims(USER_A)}, true)`,
+  app`SELECT id FROM events`,
+  app`SELECT id FROM events WHERE id = ${eventB.eventId}`,
+  app`SELECT id FROM event_attendees WHERE event_id = ${eventB.eventId}`,
+])
+check('organiser A sees only their own event', ownEvents.length === 1, `${ownEvents.length} visible`)
+check('organiser A cannot read organiser B event', otherEvents.length === 0)
+check('organiser A cannot read organiser B attendees', otherAttendees.length === 0)
+
+const crossOrganiserWriteRejected = await isRejected(() => app.transaction([
+  app`SELECT set_config('request.jwt.claims', ${claims(USER_A)}, true)`,
+  app`UPDATE event_attendees SET display_name = 'hijacked' WHERE event_id = ${eventB.eventId}`,
+]))
+const hijacked = await admin`
+  SELECT display_name FROM event_attendees WHERE event_id = ${eventB.eventId}
+`
+check(
+  'organiser A cannot write organiser B attendees',
+  crossOrganiserWriteRejected || hijacked.every((row) => row.display_name !== 'hijacked'),
+  hijacked.map((row) => row.display_name).join(', ')
+)
+
+// Attendee-facing reads.
+const publicCard = await visitor`
+  SELECT tag, role_letter, display_name, answers FROM event_attendees
+  WHERE event_id = ${eventA.eventId} ORDER BY tag
+`
+check('an attendee can read the live directory', publicCard.length === 2, `${publicCard.length} cards`)
+check(
+  'the directory carries the answers that drive search',
+  publicCard.some((row) => JSON.stringify(row.answers).includes('pre-seed')),
+)
+
+const emailBlocked = await isRejected(() => visitor`
+  SELECT email FROM event_attendees WHERE event_id = ${eventA.eventId}
+`)
+check('an attendee cannot read another attendee email', emailBlocked)
+
+const claimTokenBlocked = await isRejected(() => visitor`
+  SELECT claim_token FROM event_attendees WHERE event_id = ${eventA.eventId}
+`)
+check('an attendee cannot read claim tokens', claimTokenBlocked)
+
+// Self-edit requires a verified attendee claim for that exact row.
+const [, selfEdited] = await visitor.transaction([
+  visitor`SELECT set_config('request.jwt.claims', ${attendeeClaims(attendeeA1.id)}, true)`,
+  visitor`UPDATE event_attendees SET display_name = 'Ada Updated' WHERE id = ${attendeeA1.id} RETURNING id`,
+])
+check('an attendee can edit their own card', selfEdited.length === 1)
+
+const [, hijackAttempt] = await visitor.transaction([
+  visitor`SELECT set_config('request.jwt.claims', ${attendeeClaims(attendeeA1.id)}, true)`,
+  visitor`UPDATE event_attendees SET display_name = 'hijacked' WHERE id = ${attendeeA2.id} RETURNING id`,
+])
+check('an attendee cannot edit another attendee card', hijackAttempt.length === 0)
+
+const anonEdit = await visitor`
+  UPDATE event_attendees SET display_name = 'anon' WHERE id = ${attendeeA1.id} RETURNING id
+`
+check('an edit without a verified attendee claim changes nothing', anonEdit.length === 0)
+
+// Reactions stay private to the recipient.
+await admin`
+  INSERT INTO reactions (event_id, attendee_id, from_attendee_id, kind)
+  VALUES (${eventA.eventId}, ${attendeeA2.id}, ${attendeeA1.id}, 'applaud')
+`
+const [, ownReactions, othersReactions] = await visitor.transaction([
+  visitor`SELECT set_config('request.jwt.claims', ${attendeeClaims(attendeeA1.id)}, true)`,
+  visitor`SELECT id FROM reactions WHERE from_attendee_id = ${attendeeA1.id}`,
+  visitor`SELECT id FROM reactions WHERE attendee_id = ${attendeeA2.id} AND from_attendee_id <> ${attendeeA1.id}`,
+])
+check('an attendee can see reactions they gave', ownReactions.length === 1)
+check('an attendee cannot read the tally on someone else card', othersReactions.length === 0)
+
+// A connect request must come from the verified sender.
+const spoofedConnect = await isRejected(() => visitor.transaction([
+  visitor`SELECT set_config('request.jwt.claims', ${attendeeClaims(attendeeA1.id)}, true)`,
+  visitor`INSERT INTO connection_requests (event_id, from_attendee_id, to_attendee_id)
+          VALUES (${eventA.eventId}, ${attendeeA2.id}, ${attendeeA1.id})`,
+]))
+check('a connect request cannot be sent on another attendee behalf', spoofedConnect)
+
+// Expiry is enforced in the database, not only in application code.
+await admin`
+  UPDATE events SET directory_expires_at = now() - interval '1 hour' WHERE id = ${eventA.eventId}
+`
+const afterExpiry = await visitor`
+  SELECT id FROM event_attendees WHERE event_id = ${eventA.eventId}
+`
+const eventAfterExpiry = await visitor`SELECT id FROM events WHERE id = ${eventA.eventId}`
+check('the directory is dark once it expires', afterExpiry.length === 0, `${afterExpiry.length} still visible`)
+check('the event itself is unreadable once it expires', eventAfterExpiry.length === 0)
+
+// A claimed attendee keeps what they collected.
+await admin`
+  INSERT INTO connection_requests (event_id, from_attendee_id, to_attendee_id)
+  VALUES (${eventA.eventId}, ${attendeeA1.id}, ${attendeeA2.id})
+`
+await admin`UPDATE event_attendees SET claimed_user_id = ${USER_A} WHERE id = ${attendeeA1.id}`
+const keptAfterExpiry = await admin`
+  SELECT cr.id FROM connection_requests cr
+  JOIN event_attendees a ON a.id = cr.from_attendee_id
+  WHERE a.claimed_user_id = ${USER_A}
+`
+check('a claimed attendee connections survive expiry', keptAfterExpiry.length === 1)
+
+// An event code must not consume the organiser's personal code quota.
+const personalCodes = await admin`
+  SELECT count(*)::int AS n FROM codes WHERE user_id = ${USER_A} AND kind = 'personal'
+`
+const eventCodes = await admin`
+  SELECT count(*)::int AS n FROM codes WHERE user_id = ${USER_A} AND kind = 'event'
+`
+check(
+  'an event code is distinguishable from a personal code for plan metering',
+  eventCodes[0].n === 1,
+  `${personalCodes[0].n} personal, ${eventCodes[0].n} event`
+)
+
+// Role separation holds for the new tables too.
+const authReachEvents = await isRejected(() => auth`SELECT id FROM events`)
+check('auth_user cannot query event tables', authReachEvents)
+
 await cleanup()
 const leftover = await admin`SELECT count(*)::int AS n FROM users WHERE id IN (${USER_A}, ${USER_B})`
 check('verification data is cleaned up', leftover[0].n === 0)
+const orphanEvents = await admin`SELECT count(*)::int AS n FROM events WHERE name IN ('Event A', 'Event B')`
+check('event data cascades away with its organiser', orphanEvents[0].n === 0, `${orphanEvents[0].n} left`)
 
 console.log(failures === 0 ? '\nAll database checks passed.' : `\n${failures} check(s) failed.`)
 process.exit(failures === 0 ? 0 : 1)
