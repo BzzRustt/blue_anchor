@@ -327,8 +327,9 @@ GRANT SELECT (id, code_id, campaign_id, name, venue, starts_at, ends_at,
 -- absent: the directory must never be able to read them.
 GRANT SELECT (id, event_id, tag, role_letter, display_name, answers, visibility, status)
   ON event_attendees TO visitor_user;
-GRANT INSERT (event_id, tag, role_letter, display_name, email, answers, visibility, source, status)
-  ON event_attendees TO visitor_user;
+-- No INSERT grant for visitors: self-registration goes through register_attendee() below,
+-- which enforces the plan cap and allocates the tag atomically. A direct insert could pick
+-- any tag, any status, and skip the cap.
 GRANT UPDATE (display_name, answers, visibility, status, updated_at)
   ON event_attendees TO visitor_user;
 
@@ -473,11 +474,17 @@ CREATE POLICY event_attendees_visitor_directory ON event_attendees
   FOR SELECT TO visitor_user
   USING (status = 'complete' AND public.event_directory_open(event_id));
 
--- Self-registration, bounded to an open event.
+-- Superseded by register_attendee(); dropped so no direct insert path remains.
 DROP POLICY IF EXISTS event_attendees_visitor_join ON event_attendees;
-CREATE POLICY event_attendees_visitor_join ON event_attendees
-  FOR INSERT TO visitor_user
-  WITH CHECK (public.event_directory_open(event_id));
+
+-- An attendee can always read their own card, whatever its status. Without this an
+-- attendee who was imported or given a spare tag (status 'invited') could not load the
+-- row they are about to complete, and an UPDATE ... WHERE would silently match nothing.
+-- email, claim_token and claimed_user_id stay unreadable: column grants, not policies.
+DROP POLICY IF EXISTS event_attendees_visitor_self_read ON event_attendees;
+CREATE POLICY event_attendees_visitor_self_read ON event_attendees
+  FOR SELECT TO visitor_user
+  USING (id = public.current_attendee_id() AND public.event_directory_open(event_id));
 
 -- Editing a card requires a verified attendee claim for that exact row, so an
 -- application bug cannot let one attendee overwrite another's profile.
@@ -486,6 +493,127 @@ CREATE POLICY event_attendees_visitor_self_edit ON event_attendees
   FOR UPDATE TO visitor_user
   USING (id = public.current_attendee_id() AND public.event_directory_open(event_id))
   WITH CHECK (id = public.current_attendee_id() AND public.event_directory_open(event_id));
+
+-- --------------------------------------------------------------------------
+-- Joining an event. Two SECURITY DEFINER functions, because the visitor role
+-- deliberately cannot read invited rows, the organiser's plan, or other tags.
+-- Both return only what the join page needs and nothing about email or claims.
+-- --------------------------------------------------------------------------
+
+-- What the join page needs to know about an event. Returns no row unless the directory is
+-- open, so a closed, expired and nonexistent event look identical to the caller.
+CREATE OR REPLACE FUNCTION public.join_event_info(p_slug text)
+RETURNS TABLE (
+  event_id uuid,
+  campaign_id uuid,
+  event_name text,
+  venue text,
+  starts_at timestamptz,
+  ends_at timestamptz,
+  directory_expires_at timestamptz,
+  role_set jsonb,
+  organiser_plan text,
+  attendee_count integer
+)
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT e.id, e.campaign_id, e.name, e.venue, e.starts_at, e.ends_at,
+         e.directory_expires_at, e.role_set, u.plan::text,
+         (SELECT count(*)::integer FROM event_attendees a WHERE a.event_id = e.id)
+  FROM codes c
+  JOIN events e ON e.code_id = c.id
+  JOIN users u ON u.id = e.user_id
+  WHERE c.slug = p_slug
+    AND c.kind = 'event'
+    AND c.is_live
+    AND now() < e.directory_expires_at;
+$$;
+
+REVOKE ALL ON FUNCTION public.join_event_info(text) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.join_event_info(text) TO visitor_user;
+
+-- Self-registration. Serialised per event by an advisory lock so two people registering at
+-- once can never be handed the same tag or push the event past its cap. The cap is passed in
+-- by the application (computed from lib/plans.ts), which keeps plan limits single-sourced;
+-- this function enforces it atomically. The tag format mirrors formatTag() in lib/events.ts.
+-- Errors are short codes the application maps to wording.
+CREATE OR REPLACE FUNCTION public.register_attendee(
+  p_event_id uuid,
+  p_name text,
+  p_role_letter text,
+  p_answers jsonb,
+  p_max_attendees integer
+)
+RETURNS TABLE (attendee_id uuid, attendee_tag text)
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_name text := btrim(coalesce(p_name, ''));
+  v_letter text := nullif(upper(btrim(coalesce(p_role_letter, ''))), '');
+  v_answers jsonb := coalesce(p_answers, '{}'::jsonb);
+  v_roles jsonb;
+  v_next integer;
+  v_tag text;
+  v_id uuid;
+BEGIN
+  IF NOT public.event_directory_open(p_event_id) THEN
+    RAISE EXCEPTION 'event_closed';
+  END IF;
+  IF length(v_name) < 2 OR length(v_name) > 80 THEN
+    RAISE EXCEPTION 'invalid_name';
+  END IF;
+  IF p_max_attendees IS NULL OR p_max_attendees < 1 THEN
+    RAISE EXCEPTION 'invalid_cap';
+  END IF;
+  IF jsonb_typeof(v_answers) <> 'object' OR length(v_answers::text) > 8000 THEN
+    RAISE EXCEPTION 'invalid_answers';
+  END IF;
+
+  SELECT e.role_set INTO v_roles FROM events e WHERE e.id = p_event_id;
+  IF jsonb_typeof(v_roles) = 'array' AND jsonb_array_length(v_roles) > 0 THEN
+    IF v_letter IS NULL OR NOT EXISTS (
+      SELECT 1 FROM jsonb_array_elements(v_roles) r WHERE r ->> 'letter' = v_letter
+    ) THEN
+      RAISE EXCEPTION 'invalid_role';
+    END IF;
+  ELSIF v_letter IS NOT NULL THEN
+    RAISE EXCEPTION 'invalid_role';
+  END IF;
+
+  PERFORM pg_advisory_xact_lock(hashtextextended(p_event_id::text, 0));
+
+  IF (SELECT count(*) FROM event_attendees a WHERE a.event_id = p_event_id) >= p_max_attendees THEN
+    RAISE EXCEPTION 'event_full';
+  END IF;
+
+  SELECT coalesce(max((regexp_match(a.tag, '(\d+)$'))[1]::integer), 0) + 1
+    INTO v_next
+  FROM event_attendees a
+  WHERE a.event_id = p_event_id
+    AND a.role_letter IS NOT DISTINCT FROM v_letter;
+
+  v_tag := CASE WHEN v_next < 1000 THEN lpad(v_next::text, 3, '0') ELSE v_next::text END;
+  IF v_letter IS NOT NULL THEN
+    v_tag := v_letter || '-' || v_tag;
+  END IF;
+
+  INSERT INTO event_attendees (event_id, tag, role_letter, display_name, answers, source, status)
+  VALUES (p_event_id, v_tag, v_letter, v_name, v_answers, 'native', 'complete')
+  RETURNING id INTO v_id;
+
+  attendee_id := v_id;
+  attendee_tag := v_tag;
+  RETURN NEXT;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.register_attendee(uuid, text, text, jsonb, integer) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.register_attendee(uuid, text, text, jsonb, integer) TO visitor_user;
 
 DROP POLICY IF EXISTS event_lookups_visitor_record ON event_lookups;
 CREATE POLICY event_lookups_visitor_record ON event_lookups

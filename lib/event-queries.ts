@@ -32,5 +32,8 @@ export async function getOwnedEvent(userId: string, id: string) {
   })
 }
 
-/** The URL printed on a badge's QR. The attendee id is an unguessable capability. */
-export const joinUrl = (slug: string, attendeeId: string) => `${appBaseUrl()}/e/${slug}/join?a=${attendeeId}`
+/**
+ * The URL printed on a badge's QR. The attendee id is an unguessable capability; the badge
+ * route swaps it for a signed cookie and redirects, so the id never stays in the address bar.
+ */
+export const joinUrl = (slug: string, attendeeId: string) => `${appBaseUrl()}/e/${slug}/badge?a=${attendeeId}`

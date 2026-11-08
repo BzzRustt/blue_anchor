@@ -360,6 +360,130 @@ const spoofedConnect = await isRejected(() => visitor.transaction([
 ]))
 check('a connect request cannot be sent on another attendee behalf', spoofedConnect)
 
+// Joining an event: register_attendee() and join_event_info() are the only way in.
+const eventC = await seedEvent(USER_B, 'verify-event-c', 'Event C', '2 days')
+const eventD = await seedEvent(USER_B, 'verify-event-d', 'Event D', '-1 hour')
+await admin`
+  UPDATE events SET role_set = '[{"letter":"F","label":"Founder"},{"letter":"I","label":"Investor"}]'::jsonb
+  WHERE id = ${eventC.eventId}
+`
+
+const register = (eventId: string, name: string, letter: string | null, max = 50, answers = '{}') => visitor`
+  SELECT attendee_id, attendee_tag FROM register_attendee(
+    ${eventId}::uuid, ${name}, ${letter}, ${answers}::jsonb, ${max}::integer)
+`
+
+const info = await visitor`SELECT * FROM join_event_info('verify-event-c')`
+check('join_event_info returns an open event to a visitor', info.length === 1 && info[0].event_name === 'Event C')
+check(
+  'join_event_info exposes no email, claim or access code',
+  info.length === 1 && !Object.keys(info[0]).some((key) => /email|claim|access/.test(key)),
+  Object.keys(info[0] ?? {}).join(', ')
+)
+check('join_event_info reports the organiser plan the cap is computed from', info[0]?.organiser_plan === 'free')
+check(
+  'a nonexistent and an expired event look identical to a visitor',
+  (await visitor`SELECT 1 FROM join_event_info('no-such-event')`).length === 0 &&
+    (await visitor`SELECT 1 FROM join_event_info('verify-event-d')`).length === 0
+)
+
+await admin`UPDATE codes SET is_live = false WHERE id = ${eventC.codeId}`
+check(
+  'taking the code offline closes joining',
+  (await visitor`SELECT 1 FROM join_event_info('verify-event-c')`).length === 0 &&
+    (await isRejected(() => register(eventC.eventId, 'Offline Person', 'F')))
+)
+await admin`UPDATE codes SET is_live = true WHERE id = ${eventC.codeId}`
+
+const f1 = await register(eventC.eventId, 'Ada Obi', 'F', 50, '{"q":"fintech"}')
+const f2 = await register(eventC.eventId, 'Tunde Bello', 'F')
+const i1 = await register(eventC.eventId, 'Ivan Investor', 'I')
+check(
+  'registration allocates the next tag per role',
+  f1[0].attendee_tag === 'F-001' && f2[0].attendee_tag === 'F-002' && i1[0].attendee_tag === 'I-001',
+  [f1, f2, i1].map((r) => r[0]?.attendee_tag).join(', ')
+)
+
+const stored = await admin`
+  SELECT status, source, answers FROM event_attendees WHERE id = ${f1[0].attendee_id}
+`
+check(
+  'a registered attendee is stored complete, native and with their answers',
+  stored[0].status === 'complete' && stored[0].source === 'native' && JSON.stringify(stored[0].answers).includes('fintech')
+)
+
+check('a role is required when the event has roles', await isRejected(() => register(eventC.eventId, 'No Role', null)))
+check('a role outside the event set is refused', await isRejected(() => register(eventC.eventId, 'Wrong Role', 'Z')))
+check('a one-character name is refused', await isRejected(() => register(eventC.eventId, 'x', 'F')))
+check('answers must be an object', await isRejected(() => register(eventC.eventId, 'Bad Answers', 'F', 50, '"just a string"')))
+
+// Six people registering at the same instant must each get their own tag.
+const burst = await Promise.all(Array.from({ length: 6 }, (_, n) => register(eventC.eventId, `Burst Person ${n}`, 'I')))
+const burstTags = burst.map((r) => r[0].attendee_tag)
+check(
+  'simultaneous registrations never share a tag',
+  new Set(burstTags).size === 6 && burstTags.every((tag) => /^I-\d{3}$/.test(tag)),
+  burstTags.join(', ')
+)
+
+const seeded = await admin`SELECT count(*)::int AS n FROM event_attendees WHERE event_id = ${eventC.eventId}`
+check(
+  'registration is refused once the plan cap is reached',
+  await isRejected(() => register(eventC.eventId, 'One Too Many', 'F', seeded[0].n)),
+  `${seeded[0].n} attendees, cap ${seeded[0].n}`
+)
+check('registration into a closed event is refused', await isRejected(() => register(eventD.eventId, 'Late Arrival', null)))
+
+check(
+  'a visitor can no longer insert attendee rows directly',
+  await isRejected(() => visitor`
+    INSERT INTO event_attendees (event_id, tag, display_name, status)
+    VALUES (${eventC.eventId}, 'F-900', 'Direct Insert', 'complete')
+  `)
+)
+check(
+  'only the visitor role can call the join functions',
+  (await isRejected(() => auth`SELECT * FROM join_event_info('verify-event-c')`)) &&
+    (await isRejected(() => auth`SELECT * FROM register_attendee(${eventC.eventId}::uuid, 'Nope', 'F', '{}'::jsonb, 50)`))
+)
+
+// An imported attendee (status 'invited') must be able to load and complete their own card.
+const [invited] = await admin`
+  INSERT INTO event_attendees (event_id, tag, role_letter, display_name, email, source, status)
+  VALUES (${eventC.eventId}, 'F-099', 'F', 'Imported Person', 'imported@example.test', 'import', 'invited')
+  RETURNING id
+`
+const strangerView = await visitor`SELECT id FROM event_attendees WHERE id = ${invited.id}`
+check('an invited card is invisible to the public directory', strangerView.length === 0)
+
+const [, ownInvited, othersInvited] = await visitor.transaction([
+  visitor`SELECT set_config('request.jwt.claims', ${attendeeClaims(invited.id)}, true)`,
+  visitor`SELECT id, display_name FROM event_attendees WHERE id = ${invited.id}`,
+  visitor`SELECT id FROM event_attendees WHERE id = ${f1[0].attendee_id} AND status <> 'complete'`,
+])
+check('an invited attendee can read their own card', ownInvited.length === 1 && ownInvited[0].display_name === 'Imported Person')
+check('reading your own card does not open anyone else', othersInvited.length === 0)
+
+const [, completed] = await visitor.transaction([
+  visitor`SELECT set_config('request.jwt.claims', ${attendeeClaims(invited.id)}, true)`,
+  visitor`UPDATE event_attendees SET answers = '{"q":"hello"}'::jsonb, status = 'complete'
+          WHERE id = ${invited.id} RETURNING id`,
+])
+check('an invited attendee can complete their own card', completed.length === 1)
+
+const [, withdrawn] = await visitor.transaction([
+  visitor`SELECT set_config('request.jwt.claims', ${attendeeClaims(invited.id)}, true)`,
+  visitor`UPDATE event_attendees SET status = 'withdrawn' WHERE id = ${invited.id} RETURNING id`,
+])
+const afterWithdraw = await visitor`SELECT id FROM event_attendees WHERE id = ${invited.id}`
+check('a withdrawn card leaves the directory', withdrawn.length === 1 && afterWithdraw.length === 0)
+
+const emailStillHidden = await isRejected(() => visitor.transaction([
+  visitor`SELECT set_config('request.jwt.claims', ${attendeeClaims(invited.id)}, true)`,
+  visitor`SELECT email FROM event_attendees WHERE id = ${invited.id}`,
+]))
+check('reading your own card still never exposes email', emailStillHidden)
+
 // Expiry is enforced in the database, not only in application code.
 await admin`
   UPDATE events SET directory_expires_at = now() - interval '1 hour' WHERE id = ${eventA.eventId}
