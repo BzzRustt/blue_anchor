@@ -16,7 +16,7 @@ export default async function JoinPage({ params }: { params: Promise<{ slug: str
   const attendeeId = await verifiedAttendeeId(ctx.eventId)
   const card = attendeeId ? await loadMyCard(attendeeId, ctx.eventId) : null
 
-  if (!card && !canAddAttendee(ctx.plan, ctx.attendeeCount).ok) {
+  if (!card && !canAddAttendee(ctx.plan, ctx.attendeeCount, ctx.capacity).ok) {
     return <EventShell eyebrow={ctx.name} title="This event is full" subtitle="It has reached its attendee limit. Please speak to the organiser." />
   }
 

@@ -30,6 +30,8 @@ export interface JoinContext {
   roles: Role[]
   plan: Plan
   attendeeCount: number
+  /** Purchased capacity for this event; null for events that predate paid publishing. */
+  capacity: number | null
   questions: Question[]
 }
 
@@ -88,6 +90,7 @@ export async function getJoinContext(slug: string): Promise<JoinContext | null> 
     roles: Array.isArray(row.role_set) ? (row.role_set as Role[]) : [],
     plan: String(row.organiser_plan) as Plan,
     attendeeCount: Number(row.attendee_count),
+    capacity: row.capacity == null ? null : Number(row.capacity),
     questions: blocks
       .filter((block) => block.type === 'open_text')
       .map((block) => {

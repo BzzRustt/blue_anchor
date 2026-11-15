@@ -15,10 +15,12 @@ import {
   parseRoster,
   type Role,
 } from '@/lib/events'
+import { appBaseUrl } from '@/lib/event-queries'
+import { findPackage } from '@/lib/event-packages'
 import { requireOwner } from '@/lib/owner'
+import { createCheckoutSession, stripeConfigured } from '@/lib/stripe'
 import {
   canAddAttendee,
-  canCreateEvent,
   canUseRoleLetters,
   directoryExpiresAt,
   type Plan,
@@ -36,6 +38,8 @@ const createSchema = z.object({
   // ponytail: offset is read at creation time, so an event across a DST change is off by an
   // hour. Store an IANA zone on the event when that matters.
   tzOffset: z.coerce.number().int().min(-840).max(840).default(0),
+  tzName: z.string().max(64).regex(/^[A-Za-z_]+(\/[A-Za-z0-9_+-]+){0,2}$/).default('Europe/London'),
+  description: z.string().trim().max(500).optional(),
   roles: z.string().max(400).optional(),
   q0: question,
   q1: question,
@@ -69,7 +73,6 @@ export async function createEvent(formData: FormData) {
   if (rolesError) return fail('/app/events/new', 'roles', rolesError)
 
   const questions = [parsed.data.q0, parsed.data.q1, parsed.data.q2, parsed.data.q3]
-  const eventYear = startsAt.getUTCFullYear()
 
   const result = await withOwnerDb(userId, async (db): Promise<{ blocked: string } | { id: string }> => {
     const [owner] = await db.select({ plan: schema.users.plan }).from(schema.users).where(eq(schema.users.id, userId)).limit(1)
@@ -77,11 +80,12 @@ export async function createEvent(formData: FormData) {
 
     if (roles.length && !canUseRoleLetters(plan).ok) return { blocked: 'pro_roles' }
 
+    // Creating and previewing is free (pay to publish), so the cap is only a spam guard on open drafts.
     const [{ count }] = await db
       .select({ count: sql<number>`count(*)::int` })
       .from(schema.events)
-      .where(and(eq(schema.events.userId, userId), sql`extract(year from ${schema.events.startsAt} at time zone 'UTC') = ${eventYear}`))
-    if (!canCreateEvent(plan, count).ok) return { blocked: 'event_limit' }
+      .where(and(eq(schema.events.userId, userId), sql`${schema.events.status} in ('draft','awaiting_payment')`))
+    if (count >= 20) return { blocked: 'event_limit' }
 
     // An event owns a code and a campaign, which is what lets it reuse the whole spine
     // (permanent slug, kill switch, question blocks) without touching either table's shape.
@@ -122,6 +126,9 @@ export async function createEvent(formData: FormData) {
       accessCode: generateAccessCode(),
       roleSet: roles,
       directoryExpiresAt: directoryExpiresAt(endsAt),
+      status: 'draft',
+      timezone: parsed.data.tzName,
+      description: parsed.data.description || null,
     }).returning({ id: schema.events.id })
 
     return { id: event.id }
@@ -235,4 +242,45 @@ export async function addSpareTags(formData: FormData) {
   if ('error' in result) return fail(here, result.error, result.detail)
   revalidatePath(here)
   redirect(`${here}?added=${result.added}`)
+}
+
+/** Starts Stripe Checkout for an event's chosen package. Publishing happens only in the webhook. */
+export async function startPublish(formData: FormData) {
+  const session = await requireOwner()
+  const eventId = String(formData.get('eventId') ?? '')
+  if (!uuid.safeParse(eventId).success) redirect('/app/events')
+  const here = `/app/events/${eventId}`
+  const pkg = findPackage(String(formData.get('package') ?? ''))
+  if (!pkg) return fail(here, 'invalid')
+  if (!stripeConfigured()) return fail(here, 'payments_off')
+
+  const userId = session.user.id
+  const purchase = await withOwnerDb(userId, async (db) => {
+    const [event] = await db.select({ id: schema.events.id, name: schema.events.name, status: schema.events.status })
+      .from(schema.events).where(and(eq(schema.events.id, eventId), eq(schema.events.userId, userId))).limit(1)
+    if (!event || (event.status !== 'draft' && event.status !== 'awaiting_payment')) return null
+    const [row] = await db.insert(schema.eventPurchases).values({
+      eventId, userId, packageKey: pkg.key, capacity: pkg.capacity, amountPence: pkg.pricePence,
+    }).returning({ id: schema.eventPurchases.id })
+    await db.execute(sql`select event_set_status(${eventId}::uuid, 'awaiting_payment')`)
+    return { id: row.id, name: event.name }
+  })
+  if (!purchase) return fail(here, 'not_found')
+
+  const checkout = await createCheckoutSession({
+    amountPence: pkg.pricePence, currency: 'gbp', productName: `${purchase.name} – ${pkg.name}`, purchaseId: purchase.id,
+    successUrl: `${appBaseUrl()}${here}?paid=1`, cancelUrl: `${appBaseUrl()}${here}?error=cancelled`,
+  })
+  if (!checkout) return fail(here, 'payments_off')
+  await withOwnerDb(userId, (db) => db.execute(sql`update event_purchases set stripe_session_id = ${checkout.id} where id = ${purchase.id}::uuid`))
+  redirect(checkout.url)
+}
+
+export async function cancelEvent(formData: FormData) {
+  const session = await requireOwner()
+  const eventId = String(formData.get('eventId') ?? '')
+  if (!uuid.safeParse(eventId).success) redirect('/app/events')
+  await withOwnerDb(session.user.id, (db) => db.execute(sql`select event_set_status(${eventId}::uuid, 'cancelled')`))
+  revalidatePath('/app/events')
+  redirect(`/app/events/${eventId}`)
 }

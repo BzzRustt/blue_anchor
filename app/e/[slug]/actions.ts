@@ -63,7 +63,7 @@ export async function submitProfile(_previous: JoinState, formData: FormData): P
   const role = ctx.roles.length ? String(formData.get('role') ?? '') : null
   if (ctx.roles.length && !ctx.roles.some((candidate) => candidate.letter === role)) return fail('Please choose your role.')
 
-  if (!canAddAttendee(ctx.plan, ctx.attendeeCount).ok) {
+  if (!canAddAttendee(ctx.plan, ctx.attendeeCount, ctx.capacity).ok) {
     return fail('This event has reached its attendee limit. Please speak to the organiser.')
   }
 
@@ -71,7 +71,7 @@ export async function submitProfile(_previous: JoinState, formData: FormData): P
     const result = await visitorDb.execute(sql`
       select attendee_id, attendee_tag from register_attendee(
         ${ctx.eventId}::uuid, ${name}::text, ${role}::text,
-        ${JSON.stringify(answers)}::jsonb, ${PLAN_LIMITS[ctx.plan].attendeesPerEvent}::integer)
+        ${JSON.stringify(answers)}::jsonb, ${ctx.capacity ?? PLAN_LIMITS[ctx.plan].attendeesPerEvent}::integer)
     `)
     const rows = (Array.isArray(result) ? result : (result as { rows: unknown[] }).rows) as Array<Record<string, string>>
     const created = rows[0]

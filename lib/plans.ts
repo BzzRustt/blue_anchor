@@ -298,8 +298,9 @@ export function canCreateEvent(plan: Plan, eventsThisYear: number): Gate {
  * searches or connections they generate, for the same reason response volume is
  * uncapped: never bill someone for the product working.
  */
-export function canAddAttendee(plan: Plan, currentAttendeeCount: number): Gate {
-  const max = planLimits(plan).attendeesPerEvent
+export function canAddAttendee(plan: Plan, currentAttendeeCount: number, eventCapacity?: number | null): Gate {
+  // A purchased per-event capacity (M4) wins; events created before it fall back to the plan.
+  const max = eventCapacity ?? planLimits(plan).attendeesPerEvent
   if (currentAttendeeCount >= max) {
     return deny(
       `The ${plan} plan allows ${max} attendees per event.`,

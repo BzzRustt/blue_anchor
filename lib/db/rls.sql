@@ -384,10 +384,21 @@ ALTER TABLE reactions           FORCE ROW LEVEL SECURITY;
 -- Organiser. Every row is reached through events.user_id.
 -- --------------------------------------------------------------------------
 
+-- M4: an organiser can never publish their own event. New rows must be drafts with no capacity,
+-- and UPDATE is column-granted without status/capacity/published_at/cancelled_at (see below).
+-- Status moves only through event_set_status() and confirm_event_purchase().
 DROP POLICY IF EXISTS events_organiser ON events;
-CREATE POLICY events_organiser ON events TO app_user
-  USING (user_id = auth.user_id())
-  WITH CHECK (user_id = auth.user_id());
+DROP POLICY IF EXISTS events_organiser_read ON events;
+CREATE POLICY events_organiser_read ON events FOR SELECT TO app_user USING (user_id = auth.user_id());
+DROP POLICY IF EXISTS events_organiser_insert ON events;
+CREATE POLICY events_organiser_insert ON events FOR INSERT TO app_user
+  WITH CHECK (user_id = auth.user_id() AND status = 'draft' AND capacity IS NULL
+              AND published_at IS NULL AND cancelled_at IS NULL);
+DROP POLICY IF EXISTS events_organiser_update ON events;
+CREATE POLICY events_organiser_update ON events FOR UPDATE TO app_user
+  USING (user_id = auth.user_id()) WITH CHECK (user_id = auth.user_id());
+DROP POLICY IF EXISTS events_organiser_delete ON events;
+CREATE POLICY events_organiser_delete ON events FOR DELETE TO app_user USING (user_id = auth.user_id());
 
 DROP POLICY IF EXISTS event_attendees_organiser ON event_attendees;
 CREATE POLICY event_attendees_organiser ON event_attendees TO app_user
@@ -453,6 +464,7 @@ AS $$
     JOIN codes c ON c.id = e.code_id
     WHERE e.id = event_id
       AND c.is_live
+      AND e.status = 'published'
       AND now() < e.directory_expires_at
   );
 $$;
@@ -530,7 +542,9 @@ CREATE POLICY event_attendees_visitor_self_edit ON event_attendees
 
 -- What the join page needs to know about an event. Returns no row unless the directory is
 -- open, so a closed, expired and nonexistent event look identical to the caller.
-CREATE OR REPLACE FUNCTION public.join_event_info(p_slug text)
+-- M4 added the capacity column, which changes the return type, so the old shape is dropped first.
+DROP FUNCTION IF EXISTS public.join_event_info(text);
+CREATE FUNCTION public.join_event_info(p_slug text)
 RETURNS TABLE (
   event_id uuid,
   campaign_id uuid,
@@ -541,7 +555,8 @@ RETURNS TABLE (
   directory_expires_at timestamptz,
   role_set jsonb,
   organiser_plan text,
-  attendee_count integer
+  attendee_count integer,
+  capacity integer
 )
 LANGUAGE sql
 STABLE
@@ -550,13 +565,15 @@ SET search_path = public
 AS $$
   SELECT e.id, e.campaign_id, e.name, e.venue, e.starts_at, e.ends_at,
          e.directory_expires_at, e.role_set, u.plan::text,
-         (SELECT count(*)::integer FROM event_attendees a WHERE a.event_id = e.id)
+         (SELECT count(*)::integer FROM event_attendees a WHERE a.event_id = e.id),
+         e.capacity
   FROM codes c
   JOIN events e ON e.code_id = c.id
   JOIN users u ON u.id = e.user_id
   WHERE c.slug = p_slug
     AND c.kind = 'event'
     AND c.is_live
+    AND e.status = 'published'
     AND now() < e.directory_expires_at;
 $$;
 
@@ -680,3 +697,70 @@ DROP POLICY IF EXISTS reactions_visitor_own ON reactions;
 CREATE POLICY reactions_visitor_own ON reactions
   FOR SELECT TO visitor_user
   USING (from_attendee_id = public.current_attendee_id());
+
+-- --------------------------------------------------------------------------
+-- M4: publishing. Column grants and the two functions that are the only way status moves.
+-- --------------------------------------------------------------------------
+REVOKE UPDATE ON events FROM app_user;
+GRANT UPDATE (name, venue, starts_at, ends_at, access_code, role_set, directory_expires_at,
+              timezone, description, cover_url, discovery, messaging_enabled,
+              networking_opens_at, updated_at) ON events TO app_user;
+GRANT SELECT (status, timezone, description, capacity) ON events TO visitor_user;
+
+ALTER TABLE event_purchases ENABLE ROW LEVEL SECURITY;
+ALTER TABLE event_purchases FORCE ROW LEVEL SECURITY;
+GRANT SELECT, INSERT ON event_purchases TO app_user;
+DROP POLICY IF EXISTS event_purchases_read ON event_purchases;
+CREATE POLICY event_purchases_read ON event_purchases FOR SELECT TO app_user USING (user_id = auth.user_id());
+DROP POLICY IF EXISTS event_purchases_insert ON event_purchases;
+CREATE POLICY event_purchases_insert ON event_purchases FOR INSERT TO app_user
+  WITH CHECK (user_id = auth.user_id() AND status = 'pending'
+              AND EXISTS (SELECT 1 FROM events e WHERE e.id = event_id AND e.user_id = auth.user_id()));
+
+-- Organiser moves their own event between draft and awaiting_payment, or cancels it. Never to published.
+CREATE OR REPLACE FUNCTION public.event_set_status(p_event uuid, p_to text)
+RETURNS boolean
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE v_from text;
+BEGIN
+  SELECT status INTO v_from FROM events WHERE id = p_event AND user_id = auth.user_id();
+  IF v_from IS NULL THEN RETURN false; END IF;
+  IF (v_from = 'draft' AND p_to = 'awaiting_payment')
+     OR (v_from = 'awaiting_payment' AND p_to = 'draft')
+     OR (v_from IN ('draft','awaiting_payment','published') AND p_to = 'cancelled') THEN
+    UPDATE events SET status = p_to, updated_at = now(),
+           cancelled_at = CASE WHEN p_to = 'cancelled' THEN now() ELSE cancelled_at END
+     WHERE id = p_event;
+    RETURN true;
+  END IF;
+  RETURN false;
+END;
+$$;
+REVOKE ALL ON FUNCTION public.event_set_status(uuid, text) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.event_set_status(uuid, text) TO app_user;
+
+-- Called only by the signature-verified Stripe webhook. Idempotent: a replayed webhook changes nothing.
+CREATE OR REPLACE FUNCTION public.confirm_event_purchase(p_session text)
+RETURNS uuid
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE v_purchase event_purchases%ROWTYPE;
+BEGIN
+  UPDATE event_purchases SET status = 'paid', paid_at = now()
+   WHERE stripe_session_id = p_session AND status = 'pending'
+   RETURNING * INTO v_purchase;
+  IF NOT FOUND THEN RETURN NULL; END IF;
+  UPDATE events SET status = 'published', capacity = greatest(coalesce(capacity, 0), v_purchase.capacity),
+         published_at = coalesce(published_at, now()), updated_at = now()
+   WHERE id = v_purchase.event_id AND status IN ('draft','awaiting_payment','published');
+  RETURN v_purchase.event_id;
+END;
+$$;
+REVOKE ALL ON FUNCTION public.confirm_event_purchase(text) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.confirm_event_purchase(text) TO visitor_user;
+

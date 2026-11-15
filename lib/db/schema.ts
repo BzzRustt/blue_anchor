@@ -338,6 +338,25 @@ export const scans = pgTable(
   (t) => [index('scans_code_idx').on(t.codeId, t.scannedAt.desc())]
 )
 
+/** A pay-to-publish purchase. Created pending by the organiser; marked paid only by the Stripe webhook. */
+export const eventPurchases = pgTable(
+  'event_purchases',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    eventId: uuid('event_id').notNull().references(() => events.id, { onDelete: 'cascade' }),
+    userId: text('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+    packageKey: text('package_key').notNull(),
+    capacity: integer('capacity').notNull(),
+    amountPence: integer('amount_pence').notNull(),
+    currency: text('currency').notNull().default('gbp'),
+    status: text('status').notNull().default('pending'),
+    stripeSessionId: text('stripe_session_id'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    paidAt: timestamp('paid_at', { withTimezone: true }),
+  },
+  (t) => [uniqueIndex('event_purchases_session_unique').on(t.stripeSessionId), index('event_purchases_event_idx').on(t.eventId)]
+)
+
 /** One row per outbound link click on a visitor page. Written by the /out redirect route only. */
 export const linkClicks = pgTable(
   'link_clicks',
@@ -495,6 +514,18 @@ export const events = pgTable(
     roleSet: jsonb('role_set').notNull().default([]),
     /** When the directory goes dark for attendees. Usually endsAt + 48h. */
     directoryExpiresAt: timestamp('directory_expires_at', { withTimezone: true }).notNull(),
+    /** draft -> awaiting_payment -> published | cancelled. Only 'published' is reachable by attendees. */
+    status: text('status').notNull().default('published'),
+    timezone: text('timezone').notNull().default('Europe/London'),
+    description: text('description'),
+    coverUrl: text('cover_url'),
+    /** Purchased attendee capacity. Null = legacy event, capped by the organiser's plan. */
+    capacity: integer('capacity'),
+    discovery: text('discovery').notNull().default('badge'),
+    messagingEnabled: boolean('messaging_enabled').notNull().default(false),
+    networkingOpensAt: timestamp('networking_opens_at', { withTimezone: true }),
+    publishedAt: timestamp('published_at', { withTimezone: true }),
+    cancelledAt: timestamp('cancelled_at', { withTimezone: true }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
@@ -538,6 +569,8 @@ export const eventAttendees = pgTable(
     claimedUserId: text('claimed_user_id').references(() => users.id, { onDelete: 'set null' }),
     /** Single-use token for the claim link emailed after the event. */
     claimToken: text('claim_token'),
+    externalRef: text('external_ref'),
+    checkedInAt: timestamp('checked_in_at', { withTimezone: true }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
