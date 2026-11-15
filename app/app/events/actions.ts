@@ -1,6 +1,6 @@
 'use server'
 
-import { and, eq, gte, sql } from 'drizzle-orm'
+import { and, eq, sql } from 'drizzle-orm'
 import { revalidatePath } from 'next/cache'
 import { redirect } from 'next/navigation'
 import { z } from 'zod'
@@ -69,7 +69,7 @@ export async function createEvent(formData: FormData) {
   if (rolesError) return fail('/app/events/new', 'roles', rolesError)
 
   const questions = [parsed.data.q0, parsed.data.q1, parsed.data.q2, parsed.data.q3]
-  const yearStart = new Date(Date.UTC(new Date().getUTCFullYear(), 0, 1))
+  const eventYear = startsAt.getUTCFullYear()
 
   const result = await withOwnerDb(userId, async (db): Promise<{ blocked: string } | { id: string }> => {
     const [owner] = await db.select({ plan: schema.users.plan }).from(schema.users).where(eq(schema.users.id, userId)).limit(1)
@@ -80,7 +80,7 @@ export async function createEvent(formData: FormData) {
     const [{ count }] = await db
       .select({ count: sql<number>`count(*)::int` })
       .from(schema.events)
-      .where(and(eq(schema.events.userId, userId), gte(schema.events.createdAt, yearStart)))
+      .where(and(eq(schema.events.userId, userId), sql`extract(year from ${schema.events.startsAt} at time zone 'UTC') = ${eventYear}`))
     if (!canCreateEvent(plan, count).ok) return { blocked: 'event_limit' }
 
     // An event owns a code and a campaign, which is what lets it reuse the whole spine

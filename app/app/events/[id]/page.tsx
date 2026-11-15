@@ -1,11 +1,12 @@
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
-import { DownloadSimple, Printer } from '@phosphor-icons/react/dist/ssr'
+import { ArrowSquareOut, DownloadSimple, Printer } from '@phosphor-icons/react/dist/ssr'
 import { addSpareTags, importRoster } from '@/app/app/events/actions'
 import { CopyLinkButton } from '@/components/workspace/CopyLinkButton'
 import { PageIntro } from '@/components/workspace/PageIntro'
 import { appBaseUrl, getOwnedEvent } from '@/lib/event-queries'
 import { formatWhen } from '@/lib/events'
+import { planLimits, type Plan } from '@/lib/plans'
 import { requireOwner } from '@/lib/owner'
 
 const errors: Record<string, string> = {
@@ -24,13 +25,14 @@ export default async function EventPage({ params, searchParams }: { params: Prom
   const { event, slug, roles, attendees } = found
   const url = `${appBaseUrl()}/e/${slug}`
   const roleLabel = new Map(roles.map((role) => [role.letter, role.label]))
+  const cap = planLimits((session.user.plan ?? 'free') as Plan).attendeesPerEvent
   const failure = query.error && (query.detail || errors[query.error])
   const limit = query.error === 'attendee_limit'
   const base = `/app/events/${event.id}`
 
   return (
     <div className="grid gap-7">
-      <PageIntro eyebrow={formatWhen(event.startsAt)} title={event.name} body={event.venue ?? 'Add people, then print badges that carry each person’s tag.'} action={<div className="flex flex-wrap gap-3"><a className="action-secondary" href={`${base}/badges.csv`}><DownloadSimple size={18} />Badge CSV</a><Link className="action-primary" href={`${base}/badges`}><Printer size={18} />Print badges</Link></div>} />
+      <PageIntro eyebrow={formatWhen(event.startsAt)} title={event.name} body={event.venue ?? 'Add people, then print badges that carry each person’s tag.'} action={<div className="flex flex-wrap gap-3"><a className="action-secondary" href={url} target="_blank" rel="noreferrer"><ArrowSquareOut size={18} />Attendee view</a><a className="action-secondary" href={`${base}/badges.csv`}><DownloadSimple size={18} />Badge CSV</a><Link className="action-primary" href={`${base}/badges`}><Printer size={18} />Print badges</Link></div>} />
 
       {query.added && <p role="status" className="rounded-xl border border-[var(--accent)] bg-[var(--accent-soft)] p-3 text-sm font-bold text-[var(--accent-strong)]">Added {Number(query.added) || 0} {Number(query.added) === 1 ? 'tag' : 'tags'}.</p>}
       {failure && <p role="alert" className="rounded-xl border border-[color-mix(in_srgb,var(--danger)_35%,var(--line))] bg-[color-mix(in_srgb,var(--danger)_8%,var(--surface))] p-3 text-sm text-[var(--danger)]">{failure} {limit && <Link className="font-bold underline" href="/plans">See plans</Link>}</p>}
@@ -59,10 +61,10 @@ export default async function EventPage({ params, searchParams }: { params: Prom
       </section>
 
       <section className="soft-card overflow-hidden">
-        <div className="flex items-center justify-between border-b border-[var(--line)] p-5"><h2 className="font-extrabold">Tags issued <span className="text-[var(--faint)]">({attendees.length})</span></h2></div>
+        <div className="flex items-center justify-between border-b border-[var(--line)] p-5"><h2 className="font-extrabold">Tags issued</h2><span className="status-draft" aria-label={`${attendees.length} of ${cap} tags used`}>{attendees.length} / {cap}</span></div>
         {attendees.length === 0
           ? <p className="p-8 text-center text-sm text-[var(--muted)]">No tags yet. Add your attendee list or generate spare tags above.</p>
-          : <div className="overflow-x-auto"><table className="w-full min-w-[520px] text-left text-sm"><thead className="text-xs uppercase tracking-[.1em] text-[var(--faint)]"><tr><th className="px-5 py-3">Tag</th><th className="px-5 py-3">Name</th><th className="px-5 py-3">Role</th><th className="px-5 py-3">Status</th></tr></thead><tbody>{attendees.map((a) => <tr key={a.id} className="border-t border-[var(--line)]"><td className="px-5 py-3 font-mono font-extrabold">{a.tag}</td><td className="px-5 py-3">{a.displayName}</td><td className="px-5 py-3 text-[var(--muted)]">{a.roleLetter ? roleLabel.get(a.roleLetter) ?? a.roleLetter : '—'}</td><td className="px-5 py-3 capitalize text-[var(--muted)]">{a.status === 'invited' ? (a.source === 'walk_up' ? 'Spare' : 'Not joined yet') : a.status}</td></tr>)}</tbody></table></div>}
+          : <div className="overflow-x-auto"><table className="w-full min-w-[520px] text-left text-sm"><thead className="text-xs uppercase tracking-[.1em] text-[var(--faint)]"><tr><th className="px-5 py-3">Tag</th><th className="px-5 py-3">Name</th><th className="px-5 py-3">Role</th><th className="px-5 py-3">Status</th></tr></thead><tbody>{attendees.map((a) => <tr key={a.id} className="border-t border-[var(--line)]"><td className="px-5 py-3 font-mono font-extrabold">{a.tag}</td><td className="px-5 py-3">{a.displayName}</td><td className="px-5 py-3 text-[var(--muted)]">{a.roleLetter ? roleLabel.get(a.roleLetter) ?? a.roleLetter : '—'}</td><td className="px-5 py-3 text-[var(--muted)]">{a.status === 'invited' ? (a.source === 'walk_up' ? 'Spare' : 'Not joined yet') : a.status === 'complete' ? 'Card complete' : 'Withdrawn'}</td></tr>)}</tbody></table></div>}
       </section>
     </div>
   )
