@@ -16,9 +16,19 @@ export const metadata: Metadata = {
   description: 'A permanent QR code for your profile, questions, and next conversation.',
 }
 
+/**
+ * Applies the saved theme before first paint. Without it only pages that mount the theme
+ * toggle (the workspace and marketing header) honoured a saved "dark", so log in, sign up and
+ * the attendee pages came up light and flashed. A fixed string with no user input in it.
+ */
+const THEME_BOOT = "try{if(localStorage.getItem('scanme-theme')==='dark')document.documentElement.dataset.theme='dark'}catch(e){}"
+
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
     <html lang="en" data-theme="light" suppressHydrationWarning>
+      <head>
+        <script dangerouslySetInnerHTML={{ __html: THEME_BOOT }} />
+      </head>
       <body className={`${geist.className} antialiased`}>{children}</body>
     </html>
   )
