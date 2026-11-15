@@ -1,5 +1,5 @@
 import crypto from 'node:crypto'
-import { and, eq, gte } from 'drizzle-orm'
+import { and, eq, gte, sql } from 'drizzle-orm'
 import { NextRequest, NextResponse } from 'next/server'
 import { cookies } from 'next/headers'
 import { z } from 'zod'
@@ -21,6 +21,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
   if (!token || verifySessionToken(token, secret) === null) return NextResponse.json({ error: 'Refresh the page before responding.' }, { status: 401 })
   const ipHash = hashIp(requestIp(request), secret)
   if (submissionLimiter.isLimited(ipHash)) return NextResponse.json({ error: 'Please wait before sending another response.' }, { status: 429 })
+  submissionLimiter.increment(ipHash) // count every attempt, not just successes, so failed probes are limited too
   const payload = bodySchema.safeParse(await request.json().catch(() => null))
   if (!payload.success) return NextResponse.json({ error: 'Check your answers and try again.' }, { status: 400 })
   const experience = await getVisitorExperience(code)
@@ -45,7 +46,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     if (previous) return NextResponse.json({ error: 'You have already responded to this code.' }, { status: 409 })
   }
 
-  await visitorDb.insert(schema.responses).values({ userId: experience.code.userId, codeId: experience.code.id, campaignId: experience.campaign.id, sessionToken: token, answers, deviceHash: ipHash })
-  submissionLimiter.increment(ipHash)
+  // Only granted columns (see scan route): defaulted columns would need privileges visitor_user lacks.
+  await visitorDb.execute(sql`insert into responses (user_id, code_id, campaign_id, session_token, answers, device_hash) values (${experience.code.userId}, ${experience.code.id}, ${experience.campaign.id}, ${token}, ${JSON.stringify(answers)}::jsonb, ${ipHash})`)
   return NextResponse.json({ ok: true }, { status: 201 })
 }

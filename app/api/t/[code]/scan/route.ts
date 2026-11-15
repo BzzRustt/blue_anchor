@@ -1,7 +1,8 @@
 import crypto from 'node:crypto'
 import { NextRequest, NextResponse } from 'next/server'
 import { cookies } from 'next/headers'
-import { schema, visitorDb } from '@/lib/db'
+import { sql } from 'drizzle-orm'
+import { visitorDb } from '@/lib/db'
 import { getVisitorExperience } from '@/lib/product'
 import { generateSessionToken } from '@/lib/session-token'
 
@@ -18,7 +19,9 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
   if (!secret) return NextResponse.json({ error: 'Server configuration error' }, { status: 500 })
   const jar = await cookies()
   const token = jar.get(COOKIE)?.value ?? generateSessionToken(secret)
-  await visitorDb.insert(schema.scans).values({ codeId: experience.code.id, campaignId: experience.campaign.id, sessionToken: token, ipHash: hashIp(requestIp(request), secret) })
+  // Raw insert naming only the columns visitor_user is granted: Drizzle's insert() also lists
+  // defaulted columns (id, scanned_at) as DEFAULT, which Postgres rejects without column privilege.
+  await visitorDb.execute(sql`insert into scans (code_id, campaign_id, session_token, ip_hash) values (${experience.code.id}, ${experience.campaign.id}, ${token}, ${hashIp(requestIp(request), secret)})`)
   const response = NextResponse.json({ ok: true })
   if (!jar.get(COOKIE)) response.cookies.set(COOKIE, token, { httpOnly: true, sameSite: 'lax', secure: (process.env.NEXT_PUBLIC_APP_URL ?? '').startsWith('https://'), maxAge: 60 * 60 * 24 * 30, path: '/' })
   return response
