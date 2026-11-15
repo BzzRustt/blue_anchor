@@ -1,0 +1,90 @@
+import assert from 'node:assert/strict'
+import test from 'node:test'
+import { ALLOWED_SHOW, buildBlocks, defaultConfig, MODE_INFO, MODE_KEYS, parseModeConfig, safeHttpUrl, visitorLinks, type OwnerProfile } from './modes.ts'
+
+const owner: OwnerProfile = {
+  name: 'Amara Cole', image: 'https://x.test/a.png', bio: 'Designer', role: 'Designer', company: 'Fieldwork',
+  instagram: '@amara.c', linkedin: 'https://linkedin.com/in/amara', tiktok: 'amara', youtube: 'javascript:alert(1)', spotify: null,
+  website: 'https://amara.test', portfolioUrl: 'https://folio.test', interests: 'Typography', lookingFor: 'Clients', canOffer: 'Design',
+}
+
+test('five modes, three free and two Pro', () => {
+  assert.deepEqual([...MODE_KEYS], ['basic', 'networking', 'incognito', 'creator', 'portfolio'])
+  assert.deepEqual(MODE_KEYS.filter((k) => MODE_INFO[k].pro), ['creator', 'portfolio'])
+})
+
+test('parseModeConfig is total: garbage in, bounded defaults out', () => {
+  for (const raw of [null, undefined, 'x', 42, [], { show: 'no', question: 7, creator: { links: 'no' } }]) {
+    const cfg = parseModeConfig('basic', raw)
+    assert.equal(cfg.question.prompt, 'Rate my drip from 1 to 5')
+    assert.equal(cfg.creator.links.length, 0)
+  }
+})
+
+test('incognito can never show anything about the owner', () => {
+  assert.deepEqual([...ALLOWED_SHOW.incognito], [])
+  const cfg = parseModeConfig('incognito', { show: { photo: true, bio: true, instagram: true } })
+  assert.deepEqual(cfg.show, {})
+  assert.deepEqual(visitorLinks('incognito', cfg, owner), [])
+})
+
+test('a field a mode does not allow is dropped even if posted', () => {
+  const cfg = parseModeConfig('creator', { show: { company: true, role: true, instagram: true } })
+  assert.equal(cfg.show.company, undefined)
+  assert.equal(cfg.show.instagram, true)
+})
+
+test('only http(s) urls survive', () => {
+  assert.equal(safeHttpUrl('javascript:alert(1)'), '')
+  assert.equal(safeHttpUrl('data:text/html,hi'), '')
+  assert.equal(safeHttpUrl('/relative'), '')
+  assert.equal(safeHttpUrl('https://a.test/x'), 'https://a.test/x')
+  const cfg = parseModeConfig('creator', { creator: { featured: { title: 't', url: 'javascript:x', imageUrl: 'data:x' }, links: [{ label: 'a', url: 'ftp://x' }] } })
+  assert.equal(cfg.creator.featured.url, '')
+  assert.equal(cfg.creator.links.length, 0)
+})
+
+test('creator links and portfolio projects are capped at three', () => {
+  const links = Array.from({ length: 6 }, (_, i) => ({ label: `L${i}`, url: `https://x.test/${i}` }))
+  assert.equal(parseModeConfig('creator', { creator: { links } }).creator.links.length, 3)
+  const projects = Array.from({ length: 6 }, (_, i) => ({ title: `P${i}`, url: `https://x.test/${i}` }))
+  assert.equal(parseModeConfig('portfolio', { portfolio: { projects } }).portfolio.projects.length, 3)
+})
+
+test('visitorLinks builds a stable ordered list and skips unsafe values', () => {
+  const cfg = parseModeConfig('basic', { show: { instagram: true, linkedin: true, tiktok: true, youtube: true, website: true } })
+  const links = visitorLinks('basic', cfg, owner)
+  assert.deepEqual(links.map((l) => l.key), ['instagram', 'tiktok', 'linkedin', 'website']) // youtube was javascript:
+  assert.equal(links[0].url, 'https://instagram.com/amara.c')
+  assert.ok(links.every((l) => /^https?:\/\//.test(l.url)))
+})
+
+test('instagram handle cannot smuggle a path', () => {
+  const links = visitorLinks('basic', defaultConfig('basic'), { ...owner, instagram: '../evil/path' })
+  assert.equal(links.find((l) => l.key === 'instagram'), undefined)
+})
+
+test('blocks: basic asks a rating and an optional message', () => {
+  const blocks = buildBlocks('basic', defaultConfig('basic'))
+  assert.deepEqual(blocks.map((b) => b.type), ['scale', 'open_text'])
+  assert.equal(blocks[0].config.max, 5)
+  assert.equal(blocks[1].required, false)
+})
+
+test('blocks: networking is a controlled introduction, not open chat', () => {
+  const blocks = buildBlocks('networking', defaultConfig('networking'))
+  assert.deepEqual(blocks.map((b) => b.type), ['open_text', 'open_text', 'contact'])
+  assert.deepEqual(blocks.map((b) => b.required), [true, true, false])
+})
+
+test('blocks: single choice needs two options, switching off removes the block', () => {
+  const one = parseModeConfig('basic', { question: { on: true, type: 'choice', prompt: 'Pick', options: ['a'] }, message: { on: false } })
+  assert.equal(buildBlocks('basic', one).length, 0)
+  const two = parseModeConfig('basic', { question: { on: true, type: 'choice', prompt: 'Pick', options: ['a', 'b'] }, message: { on: false } })
+  assert.deepEqual(buildBlocks('basic', two).map((b) => b.type), ['choice'])
+})
+
+test('blocks: creator poll needs a prompt and two options', () => {
+  const cfg = parseModeConfig('creator', { creator: { poll: { on: true, prompt: 'Which city?', options: ['Lagos', 'London'] }, collab: false } })
+  assert.deepEqual(buildBlocks('creator', cfg).map((b) => b.type), ['choice'])
+})

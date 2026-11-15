@@ -8,7 +8,8 @@ const nextConfig = {
       { source: '/app/insights', destination: '/app?view=analytics', permanent: false },
       { source: '/app/code', destination: '/app', permanent: false },
       { source: '/app/campaigns', destination: '/app/modes', permanent: false },
-      { source: '/app/campaigns/:path*', destination: '/app/modes/:path*', permanent: false },
+      { source: '/app/campaigns/:path*', destination: '/app/modes', permanent: false },
+      { source: '/app/modes/new', destination: '/app/modes', permanent: false },
     ]
   },
 }

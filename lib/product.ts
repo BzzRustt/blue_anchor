@@ -1,6 +1,7 @@
 import crypto from 'node:crypto'
 import { and, asc, desc, eq, sql } from 'drizzle-orm'
 import { schema, visitorDb, withOwnerDb } from '@/lib/db'
+import { buildBlocks, defaultConfig, parseModeConfig, type ModeConfig, type ModeKey, type OwnerProfile } from '@/lib/modes'
 import { historyCutoff } from '@/lib/plans'
 
 export type QuestionConfig = {
@@ -12,16 +13,9 @@ export type QuestionConfig = {
 }
 
 export type VisitorExperience = {
-  owner: {
-    name: string
-    image: string | null
-    bio: string | null
-    role: string | null
-    company: string | null
-    instagram: string | null
-    linkedin: string | null
-    website: string | null
-  }
+  owner: OwnerProfile
+  /** Parsed, bounded config for the live Mode (see lib/modes.ts). */
+  config: ModeConfig
   code: typeof schema.codes.$inferSelect
   campaign: typeof schema.campaigns.$inferSelect
   blocks: Array<Omit<typeof schema.questionBlocks.$inferSelect, 'config'> & { config: QuestionConfig }>
@@ -67,16 +61,14 @@ export async function ensureOwnerSetup(userId: string, name: string) {
       ;[campaign] = await db.insert(schema.campaigns).values({
         userId,
         codeId: code.id,
-        mode: 'networking',
-        name: 'First introductions',
+        mode: 'basic',
+        name: 'Basic',
         status: 'live',
         repeatPolicy: 'always_open',
+        config: defaultConfig('basic'),
       }).returning()
 
-      await db.insert(schema.questionBlocks).values([
-        { campaignId: campaign.id, type: 'scale', position: 0, required: true, config: { prompt: 'Rate my drip from 1 to 10', min: 1, max: 10 } },
-        { campaignId: campaign.id, type: 'open_text', position: 1, required: false, config: { prompt: 'Do you have a message for me?', placeholder: 'Say something real' } },
-      ])
+      await db.insert(schema.questionBlocks).values(buildBlocks('basic', defaultConfig('basic')).map((block, position) => ({ campaignId: campaign.id, position, ...block })))
     }
 
     return { code, campaign }
@@ -97,6 +89,13 @@ export async function getVisitorExperience(slug: string): Promise<VisitorExperie
         instagram: schema.users.instagram,
         linkedin: schema.users.linkedin,
         website: schema.users.website,
+        tiktok: schema.users.tiktok,
+        youtube: schema.users.youtube,
+        spotify: schema.users.spotify,
+        portfolioUrl: schema.users.portfolioUrl,
+        interests: schema.users.interests,
+        lookingFor: schema.users.lookingFor,
+        canOffer: schema.users.canOffer,
       },
     })
     .from(schema.codes)
@@ -110,20 +109,17 @@ export async function getVisitorExperience(slug: string): Promise<VisitorExperie
   const blocks = await visitorDb.select().from(schema.questionBlocks).where(eq(schema.questionBlocks.campaignId, result.campaign.id)).orderBy(asc(schema.questionBlocks.position))
 
   return {
-    owner: {
-      name: result.owner.name,
-      image: result.owner.image,
-      bio: result.owner.bio,
-      role: result.owner.role,
-      company: result.owner.company,
-      instagram: result.owner.instagram,
-      linkedin: result.owner.linkedin,
-      website: result.owner.website,
-    },
+    owner: result.owner,
+    config: parseModeConfig(modeKey(result.campaign.mode), result.campaign.config),
     code: result.code,
     campaign: result.campaign,
     blocks: blocks.map((block) => ({ ...block, config: block.config as QuestionConfig })),
   }
+}
+
+/** Legacy Modes (private, open_dm...) are shown as Basic; the five real Modes pass through. */
+export function modeKey(mode: string): ModeKey {
+  return (['basic', 'networking', 'incognito', 'creator', 'portfolio'] as const).find((key) => key === mode) ?? 'basic'
 }
 
 const LONDON_DAY = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/London', year: 'numeric', month: '2-digit', day: '2-digit' })
@@ -143,12 +139,13 @@ export async function homeData(userId: string) {
       .where(and(eq(schema.codes.userId, userId), eq(schema.codes.kind, 'personal'))).limit(1)
     const campaigns = await db.select({ id: schema.campaigns.id, name: schema.campaigns.name, mode: schema.campaigns.mode, status: schema.campaigns.status }).from(schema.campaigns)
       .where(sql`${schema.campaigns.codeId} in ${personalCodeIds(userId)}`).orderBy(desc(schema.campaigns.createdAt))
-    const [counts] = await db.execute<{ unread: number; responses: number; responses30: number; visits30: number }>(sql`
+    const [counts] = await db.execute<{ unread: number; responses: number; responses30: number; visits30: number; clicks30: number }>(sql`
       select
         (select count(*)::int from responses where user_id = ${userId} and archived = false and read_at is null ${responseWindow}) as unread,
         (select count(*)::int from responses where user_id = ${userId} ${responseWindow}) as responses,
         (select count(*)::int from responses where user_id = ${userId} and submitted_at >= now() - interval '30 days') as responses30,
-        (select count(*)::int from scans where code_id in ${personalCodeIds(userId)} and scanned_at >= now() - interval '30 days') as visits30`).then((r) => r.rows)
+        (select count(*)::int from scans where code_id in ${personalCodeIds(userId)} and scanned_at >= now() - interval '30 days') as visits30,
+        (select count(*)::int from link_clicks where code_id in ${personalCodeIds(userId)} and clicked_at >= now() - interval '30 days') as clicks30`).then((r) => r.rows)
     const perDay = await db.execute<{ day: string; n: number }>(sql`
       select to_char(scanned_at at time zone 'Europe/London', 'YYYY-MM-DD') as day, count(*)::int as n
       from scans where code_id in ${personalCodeIds(userId)} and scanned_at >= now() - interval '8 days' group by 1`).then((r) => r.rows)

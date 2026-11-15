@@ -19,6 +19,7 @@ import {
   canUseRoleLetters,
   directoryExpiresAt,
   eventActivityLimit,
+  canActivateMode,
   historyCutoff,
   planAtLeast,
   responseVolumeLimit,
@@ -166,4 +167,14 @@ test('free tier can still run a real small event end to end', () => {
   assert.equal(canCreateEvent('free', 0).ok, true)
   assert.equal(canAddAttendee('free', 0).ok, true)
   assert.equal(canAddAttendee('free', 49).ok, true)
+})
+
+test('Pro Modes need Pro; free Modes are open to everyone', () => {
+  for (const mode of ['basic', 'networking', 'incognito']) assert.equal(canActivateMode('free', mode).ok, true)
+  for (const mode of ['creator', 'portfolio']) {
+    const gate = canActivateMode('free', mode)
+    assert.equal(gate.ok, false)
+    assert.equal(canActivateMode('pro', mode).ok, true)
+    assert.equal(canActivateMode('studio', mode).ok, true)
+  }
 })

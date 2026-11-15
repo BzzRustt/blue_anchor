@@ -1,20 +1,79 @@
+import Link from 'next/link'
 import { and, eq } from 'drizzle-orm'
-import { ArrowSquareOut, UserCircle } from '@phosphor-icons/react/dist/ssr'
+import { ArrowSquareOut, Check, Eye } from '@phosphor-icons/react/dist/ssr'
 import { saveProfile } from '@/app/app/actions'
 import { SignOutButton } from '@/components/workspace/SignOutButton'
 import { PageIntro } from '@/components/workspace/PageIntro'
 import { schema, withOwnerDb } from '@/lib/db'
+import { MODE_INFO, type ModeKey } from '@/lib/modes'
 import { requireOwner } from '@/lib/owner'
+import { modeKey } from '@/lib/product'
 
-export default async function ProfilePage() {
+function Group({ title, hint, children }: { title: string; hint: string; children: React.ReactNode }) {
+  return <fieldset className="grid gap-4 border-0 p-0 sm:grid-cols-2"><legend className="sm:col-span-2"><span className="block text-lg font-extrabold tracking-[-.03em]">{title}</span><span className="mt-1 block text-sm font-normal text-[var(--muted)]">{hint}</span></legend>{children}</fieldset>
+}
+
+export default async function ProfilePage({ searchParams }: { searchParams: Promise<{ saved?: string; error?: string }> }) {
+  const query = await searchParams
   const session = await requireOwner()
-  const { owner, code } = await withOwnerDb(session.user.id, async (db) => {
-    const [[owner], [code]] = await Promise.all([
+  const { owner, code, live } = await withOwnerDb(session.user.id, async (db) => {
+    const [[owner], [code], [live]] = await Promise.all([
       db.select().from(schema.users).where(eq(schema.users.id, session.user.id)).limit(1),
       db.select().from(schema.codes).where(and(eq(schema.codes.userId, session.user.id), eq(schema.codes.kind, 'personal'))).limit(1),
+      db.select({ mode: schema.campaigns.mode }).from(schema.campaigns).where(and(eq(schema.campaigns.userId, session.user.id), eq(schema.campaigns.status, 'live'))).limit(1),
     ])
-    return { owner, code }
+    return { owner, code, live }
   })
+  const active: ModeKey | null = live ? modeKey(live.mode) : null
+  const input = (name: keyof typeof owner & string, label: string, placeholder?: string, type = 'text', span = false) => (
+    <label className={`field-label ${span ? 'sm:col-span-2' : ''}`}>{label}<input className="field-input" type={type} name={name} defaultValue={(owner[name] as string | null) ?? ''} placeholder={placeholder} /></label>
+  )
 
-  return <div className="grid gap-7"><PageIntro eyebrow="Public identity" title="Profile" body="This is the context visitors see before they decide whether and how to connect." /><div className="grid gap-5 xl:grid-cols-[1fr_320px]"><form action={saveProfile} className="soft-card grid gap-5 p-5 sm:grid-cols-2 sm:p-7"><label className="field-label">Name<input className="field-input" name="name" required defaultValue={owner.name} /></label><label className="field-label">Handle<input className="field-input" name="handle" defaultValue={owner.handle ?? ''} placeholder="allen.builds" /></label><label className="field-label">Role<input className="field-input" name="role" defaultValue={owner.role ?? ''} placeholder="Product designer" /></label><label className="field-label">Company<input className="field-input" name="company" defaultValue={owner.company ?? ''} placeholder="Studio or company" /></label><label className="field-label sm:col-span-2">Bio<textarea className="field-textarea" name="bio" maxLength={240} defaultValue={owner.bio ?? ''} placeholder="What are you working on, and who would you like to meet?" /></label><label className="field-label sm:col-span-2">Profile photo URL<input className="field-input" type="url" name="image" defaultValue={owner.image ?? ''} placeholder="https://..." /></label><label className="field-label">Instagram<input className="field-input" name="instagram" defaultValue={owner.instagram ?? ''} placeholder="@allen.builds" /></label><label className="field-label">LinkedIn<input className="field-input" type="url" name="linkedin" defaultValue={owner.linkedin ?? ''} placeholder="https://linkedin.com/in/..." /></label><label className="field-label sm:col-span-2">Website<input className="field-input" type="url" name="website" defaultValue={owner.website ?? ''} placeholder="https://yourportfolio.com" /></label><button className="action-primary sm:col-span-2">Save profile</button></form><aside className="grid content-start gap-4"><div className="soft-card p-5"><span className="grid h-12 w-12 place-items-center rounded-2xl bg-[var(--accent-soft)] text-[var(--accent-strong)]"><UserCircle size={26} /></span><h2 className="mt-5 font-extrabold">Your plan</h2><p className="mt-2 text-3xl font-extrabold capitalize">{owner.plan}</p><p className="mt-2 text-sm leading-6 text-[var(--muted)]">One permanent code and up to three saved campaigns on the free plan.</p><a href="/plans" className="action-secondary mt-5 w-full">Compare plans <ArrowSquareOut size={17} /></a></div><div className="soft-card p-5"><h2 className="font-extrabold">Account</h2><p className="mt-2 text-sm text-[var(--muted)]">{owner.email}</p><div className="mt-4"><SignOutButton /></div></div>{code && <a className="action-secondary" target="_blank" rel="noreferrer" href={`/t/${code.slug}`}>Open visitor page <ArrowSquareOut size={17} /></a>}</aside></div></div>
+  return (
+    <div className="grid gap-7">
+      <PageIntro eyebrow="Account" title="Profile" body="Fill it out once. Each Mode shows only the details you choose." />
+      {query.saved && <p role="status" className="flex items-center gap-2 rounded-xl border border-[var(--accent)] bg-[var(--accent-soft)] p-3 text-sm font-bold"><Check size={18} weight="bold" />Profile saved.</p>}
+      {query.error && <p role="alert" className="rounded-xl border border-[color-mix(in_srgb,var(--danger)_32%,var(--line))] p-3 text-sm text-[var(--danger)]">{query.error === 'handle' ? 'That handle is already taken. Try another.' : 'Please check your details and try again.'}</p>}
+
+      <div className="grid gap-5 xl:grid-cols-[1fr_320px]">
+        <form action={saveProfile} className="soft-card grid gap-8 p-5 sm:p-7">
+          <Group title="Personal details" hint="The basics. Your name is always shown on Modes other than Incognito.">
+            {input('name', 'Full name', undefined, 'text')}
+            {input('handle', 'Handle', 'allen.builds')}
+            <label className="field-label sm:col-span-2">Short bio<textarea className="field-textarea" name="bio" maxLength={240} defaultValue={owner.bio ?? ''} placeholder="What are you working on, and who would you like to meet?" /></label>
+            {input('image', 'Profile photo link', 'https://...', 'url', true)}
+          </Group>
+          <Group title="Professional details" hint="Used by Networking and Portfolio Modes.">
+            {input('role', 'Role', 'Product designer')}
+            {input('company', 'Company or organisation', 'Studio or company')}
+            {input('lookingFor', 'What I am looking for', 'Clients, a co-founder, advice', 'text', true)}
+            {input('canOffer', 'What I can offer', 'Design reviews, introductions', 'text', true)}
+            {input('interests', 'Interests', 'Typography, climate tech', 'text', true)}
+          </Group>
+          <Group title="Social and professional links" hint="Only the ones a Mode chooses to show are ever visible.">
+            {input('instagram', 'Instagram', '@allen.builds')}
+            {input('tiktok', 'TikTok', '@allen.builds')}
+            {input('linkedin', 'LinkedIn', 'https://linkedin.com/in/...', 'url')}
+            {input('youtube', 'YouTube', 'https://youtube.com/@...', 'url')}
+            {input('spotify', 'Spotify', 'https://open.spotify.com/...', 'url')}
+            {input('website', 'Website', 'https://yourwebsite.com', 'url')}
+            {input('portfolioUrl', 'Portfolio link', 'https://yourportfolio.com', 'url', true)}
+          </Group>
+          <button className="action-primary w-fit">Save changes</button>
+        </form>
+
+        <aside className="grid content-start gap-4">
+          <div className="deep-card p-5">
+            <p className="relative text-[11px] font-extrabold uppercase tracking-[.16em] text-[var(--on-deep-muted)]">What visitors see</p>
+            <h2 className="relative mt-3 text-xl font-extrabold tracking-[-.03em]">Your information. Your choice.</h2>
+            <p className="relative mt-2 text-sm leading-6 text-[var(--on-deep-muted)]">Your {active ? MODE_INFO[active].name : 'active'} Mode decides which details are shared. Editing your profile never reveals a hidden field.</p>
+            {active && <Link href={`/app/modes/${active}/preview`} className="action-secondary relative mt-4 w-full !border-white !bg-white !text-[var(--deep)]"><Eye size={18} />See what others see</Link>}
+          </div>
+          <div className="soft-card p-5"><h2 className="font-extrabold">Your plan</h2><p className="mt-2 text-3xl font-extrabold">{owner.plan === 'free' ? 'Free' : 'Pro'}</p><p className="mt-2 text-sm leading-6 text-[var(--muted)]">{owner.plan === 'free' ? 'Basic, Networking and Incognito Modes. Pro adds Creator and Portfolio.' : 'Every Mode, including Creator and Portfolio.'}</p><Link href="/plans" className="action-secondary mt-5 w-full">Compare plans <ArrowSquareOut size={17} /></Link></div>
+          <div className="soft-card p-5"><h2 className="font-extrabold">Account</h2><p className="mt-2 break-all text-sm text-[var(--muted)]">{owner.email}</p><div className="mt-4"><SignOutButton /></div></div>
+          {code && <a className="action-secondary" target="_blank" rel="noreferrer" href={`/t/${code.slug}`}>Open visitor page <ArrowSquareOut size={17} /></a>}
+        </aside>
+      </div>
+    </div>
+  )
 }

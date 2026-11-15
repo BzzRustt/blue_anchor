@@ -1,8 +1,8 @@
 import Link from 'next/link'
 import QRCode from 'qrcode'
 import { and, desc, eq, gte, isNull } from 'drizzle-orm'
-import { Archive, ChatCircleDots, Check, Eye, Pause, Play, SquaresFour } from '@phosphor-icons/react/dist/ssr'
-import { archiveResponse, markResponseRead, toggleCode } from '@/app/app/actions'
+import { Archive, ChatCircleDots, Check, Eye, Flag, Pause, Play, Prohibit, SquaresFour } from '@phosphor-icons/react/dist/ssr'
+import { archiveResponse, blockSender, markResponseRead, reportResponse, toggleCode } from '@/app/app/actions'
 import { ConfirmForm } from '@/components/ConfirmForm'
 import { ShowQrDialog } from '@/components/workspace/ShowQrDialog'
 import { schema, withOwnerDb } from '@/lib/db'
@@ -74,7 +74,7 @@ export default async function HomePage({ searchParams }: { searchParams: Promise
         </nav>
         {view === 'inbox'
           ? <Inbox userId={session.user.id} query={query} since={since} campaigns={campaigns} />
-          : <Analytics days={days} visits={counts.visits30} responses={counts.responses30} />}
+          : <Analytics days={days} visits={counts.visits30} responses={counts.responses30} clicks={counts.clicks30} />}
       </section>
     </div>
   )
@@ -123,11 +123,11 @@ async function Inbox({ userId, query, since, campaigns }: { userId: string; quer
                 <li key={response.id} className="grid gap-3 p-4 sm:grid-cols-[auto_1fr_auto] sm:items-start sm:p-5">
                   <span aria-hidden="true" className="hidden h-10 w-10 place-items-center rounded-xl bg-[var(--surface-muted)] text-[var(--accent)] sm:grid"><ChatCircleDots size={20} /></span>
                   <div className="min-w-0">
-                    <div className="flex flex-wrap items-center gap-2"><h3 className="font-extrabold">{campaignName ?? 'Deleted Mode'}</h3>{!response.readAt && <span className="status-live">New</span>}</div>
+                    <div className="flex flex-wrap items-center gap-2"><h3 className="font-extrabold">{campaignName ?? 'Deleted Mode'}</h3>{!response.readAt && <span className="status-live">New</span>}{response.flagged && <span className="status-draft">Reported</span>}{response.blocked && <span className="status-draft">Sender blocked</span>}</div>
                     <div className="mt-1.5 grid gap-1">{answers.length ? answers.map((answer, index) => <p key={`${response.id}-${index}`} className="text-sm leading-6 text-[var(--muted)]">{answer}</p>) : <p className="text-sm text-[var(--muted)]">No written answer</p>}</div>
                     <p className="mt-2 text-xs text-[var(--muted)]">{mode ? modeName(mode) : 'Mode'} · Personal ScanMe · <time dateTime={response.submittedAt.toISOString()}>{response.submittedAt.toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Europe/London' })}</time></p>
                   </div>
-                  {filter !== 'archived' && <div className="flex flex-wrap gap-2">{!response.readAt && <form action={markResponseRead}><input type="hidden" name="responseId" value={response.id} /><button className="action-secondary !min-h-10 text-sm"><Check size={17} />Mark read</button></form>}<form action={archiveResponse}><input type="hidden" name="responseId" value={response.id} /><button className="action-secondary !min-h-10 text-sm"><Archive size={17} />Archive</button></form></div>}
+                  {filter !== 'archived' && <div className="flex flex-wrap gap-2">{!response.readAt && <form action={markResponseRead}><input type="hidden" name="responseId" value={response.id} /><button className="action-secondary !min-h-10 text-sm"><Check size={17} />Mark read</button></form>}<form action={archiveResponse}><input type="hidden" name="responseId" value={response.id} /><button className="action-secondary !min-h-10 text-sm"><Archive size={17} />Archive</button></form>{!response.flagged && <form action={reportResponse}><input type="hidden" name="responseId" value={response.id} /><button className="action-quiet !min-h-10 text-sm" title="Report this response as abusive"><Flag size={17} />Report</button></form>}<ConfirmForm action={blockSender} tone="danger" title="Block this sender?" message="Further responses from this device or network will be refused. This can also affect other people on the same shared network. The response is archived." confirmLabel="Block sender" triggerLabel={<><Prohibit size={17} />Block</>} triggerClassName="action-quiet !min-h-10 text-sm"><input type="hidden" name="responseId" value={response.id} /></ConfirmForm></div>}
                 </li>
               )
             })}
@@ -139,17 +139,18 @@ async function Inbox({ userId, query, since, campaigns }: { userId: string; quer
   )
 }
 
-function Analytics({ days, visits, responses }: { days: Array<{ key: string; label: string; count: number }>; visits: number; responses: number }) {
+function Analytics({ days, visits, responses, clicks }: { days: Array<{ key: string; label: string; count: number }>; visits: number; responses: number; clicks: number }) {
   const max = Math.max(1, ...days.map((day) => day.count))
   const tiles = [
     { label: 'Visits', value: String(visits), note: 'Last 30 days' },
     { label: 'Responses', value: String(responses), note: 'Last 30 days' },
+    { label: 'Outbound clicks', value: String(clicks), note: 'Links visitors opened, last 30 days' },
     { label: 'Response rate', value: visits ? `${Math.round((responses / visits) * 100)}%` : '–', note: 'Responses ÷ visits' },
   ]
   return (
     <div className="grid gap-4">
       <p className="text-sm text-[var(--muted)]">A clear view of activity on your personal page.</p>
-      <div className="grid grid-cols-3 gap-2 sm:gap-3">{tiles.map((tile) => <article key={tile.label} className="soft-card p-3 sm:p-5"><p className="text-xs text-[var(--muted)]">{tile.label}</p><p className="mt-2 text-2xl font-extrabold tracking-[-.04em] sm:text-3xl">{tile.value}</p><p className="mt-2 text-[11px] text-[var(--muted)] sm:text-xs">{tile.note}</p></article>)}</div>
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 sm:gap-3">{tiles.map((tile) => <article key={tile.label} className="soft-card p-3 sm:p-5"><p className="text-xs text-[var(--muted)]">{tile.label}</p><p className="mt-2 text-2xl font-extrabold tracking-[-.04em] sm:text-3xl">{tile.value}</p><p className="mt-2 text-[11px] text-[var(--muted)] sm:text-xs">{tile.note}</p></article>)}</div>
       <article className="soft-card p-5 sm:p-6">
         <div className="flex items-start justify-between gap-3"><div><h3 className="text-lg font-extrabold tracking-[-.03em]">Your activity this week</h3><p className="mt-1 text-xs text-[var(--muted)]">Page visits, not confirmed physical scans</p></div><span className="plan-badge">Last 7 days</span></div>
         <div className="mt-6 grid h-52 grid-cols-7 items-end gap-2 border-b border-[var(--line)] sm:gap-4" role="img" aria-label={`Visits per day: ${days.map((d) => `${d.label} ${d.count}`).join(', ')}`}>

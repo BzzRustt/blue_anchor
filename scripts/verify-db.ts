@@ -57,7 +57,7 @@ const tables = await admin`
   ORDER BY c.relname
 `
 
-check('20 application tables exist', tables.length === 20, `found ${tables.length}`)
+check('21 application tables exist', tables.length === 21, `found ${tables.length}`)
 check(
   'RLS is enabled and forced on every application table',
   tables.every((table) => table.relrowsecurity && table.relforcerowsecurity),
@@ -172,6 +172,38 @@ await visitor`
 const visitorResponse = await visitor`SELECT id FROM responses WHERE code_id = ${codeA.id} AND session_token = 'visitor-response'`
 check('visitor_user can submit and repeat-check a live response', visitorResponse.length === 1)
 check('visitor_user cannot read response answers', await isRejected(() => visitor`SELECT answers FROM responses LIMIT 1`))
+
+// M2: outbound click tracking, new public profile columns, Mode enum and config.
+await visitor`
+  INSERT INTO link_clicks (code_id, campaign_id, target, session_token)
+  VALUES (${codeA.id}, ${campaignA.id}, 'instagram', 'visitor-click')
+`
+const storedClick = await admin`SELECT target FROM link_clicks WHERE code_id = ${codeA.id} AND session_token = 'visitor-click'`
+check('visitor_user can record an outbound click on a live code', storedClick.length === 1)
+check('visitor_user cannot read click rows', await isRejected(() => visitor`SELECT target FROM link_clicks LIMIT 1`))
+check(
+  'a click cannot name a campaign that belongs to another code',
+  await isRejected(() => visitor`INSERT INTO link_clicks (code_id, campaign_id, target, session_token) VALUES (${codeA.id}, ${campaignB.id}, 'x', 'bad-click')`)
+)
+const [, clicksSeenByB] = await app.transaction([
+  app`SELECT set_config('request.jwt.claims', ${JSON.stringify({ sub: USER_B })}, true)`,
+  app`SELECT id FROM link_clicks`,
+])
+check('owner B cannot read owner A clicks', clicksSeenByB.length === 0, `${clicksSeenByB.length} visible`)
+const [, clicksSeenByA] = await app.transaction([
+  app`SELECT set_config('request.jwt.claims', ${JSON.stringify({ sub: USER_A })}, true)`,
+  app`SELECT id FROM link_clicks`,
+])
+check('owner A can read their own clicks', clicksSeenByA.length === 1)
+check('auth_user cannot query link_clicks', await isRejected(() => auth`SELECT id FROM link_clicks`))
+const publicProfile = await visitor`SELECT interests, looking_for, can_offer, tiktok, youtube, spotify, portfolio_url FROM users WHERE id = ${USER_A}`
+check('visitor_user can read the new public profile columns', publicProfile.length === 1)
+const modeLabels = (await admin`SELECT enumlabel FROM pg_enum e JOIN pg_type t ON t.oid = e.enumtypid WHERE t.typname = 'mode'`).map((row) => row.enumlabel)
+check('mode enum includes basic and incognito', modeLabels.includes('basic') && modeLabels.includes('incognito'))
+const [basicCampaign] = await admin`
+  INSERT INTO campaigns (user_id, code_id, mode, name, status) VALUES (${USER_B}, ${codeB.id}, 'incognito', 'Incognito', 'draft') RETURNING config
+`
+check('a new campaign gets an empty config object by default', JSON.stringify(basicCampaign.config) === '{}')
 
 // Core product constraints.
 let secondLiveRejected = false

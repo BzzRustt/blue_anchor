@@ -37,6 +37,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     if (block.required && (value === undefined || value === '')) return NextResponse.json({ error: 'Please answer every required question.' }, { status: 400 })
     if (block.type === 'scale' && value !== undefined) { const numeric = Number(value); if (!Number.isFinite(numeric) || numeric < (block.config.min ?? 1) || numeric > (block.config.max ?? 10)) return NextResponse.json({ error: 'One rating is outside the allowed range.' }, { status: 400 }) }
     if (block.type === 'choice' && value !== undefined && !(block.config.options ?? []).includes(String(value))) return NextResponse.json({ error: 'One answer is not an available choice.' }, { status: 400 })
+    if (block.type === 'yes_no' && value !== undefined && value !== '' && !['Yes', 'No'].includes(String(value))) return NextResponse.json({ error: 'One answer is not an available choice.' }, { status: 400 })
   }
 
   if (experience.campaign.repeatPolicy !== 'always_open') {

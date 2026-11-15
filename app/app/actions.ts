@@ -1,14 +1,12 @@
 'use server'
 
-import { and, eq, inArray } from 'drizzle-orm'
+import { and, eq } from 'drizzle-orm'
 import { revalidatePath } from 'next/cache'
 import { redirect } from 'next/navigation'
 import { z } from 'zod'
 import { auth } from '@/lib/auth-server'
 import { headers } from 'next/headers'
 import { schema, withOwnerDb } from '@/lib/db'
-import { canGoLive, canSaveCampaign, type Mode, type Plan } from '@/lib/plans'
-import { personalCodeIds } from '@/lib/product'
 
 async function owner() {
   const session = await auth.api.getSession({ headers: await headers() })
@@ -26,13 +24,21 @@ const profileSchema = z.object({
   instagram: z.string().trim().max(120).optional(),
   linkedin: z.string().trim().max(200).optional(),
   website: z.string().trim().max(200).optional(),
+  tiktok: z.string().trim().max(120).optional(),
+  youtube: z.string().trim().max(200).optional(),
+  spotify: z.string().trim().max(200).optional(),
+  portfolioUrl: z.string().trim().max(200).optional(),
+  interests: z.string().trim().max(160).optional(),
+  lookingFor: z.string().trim().max(200).optional(),
+  canOffer: z.string().trim().max(200).optional(),
 })
 
 export async function saveProfile(formData: FormData) {
   const user = await owner()
   const parsed = profileSchema.safeParse(Object.fromEntries(formData))
-  if (!parsed.success) return
+  if (!parsed.success) redirect('/app/profile?error=check')
   const emptyToNull = (value?: string) => value || null
+  try {
   await withOwnerDb(user.id, (db) => db.update(schema.users).set({
       name: parsed.data.name,
       image: emptyToNull(parsed.data.image),
@@ -43,60 +49,23 @@ export async function saveProfile(formData: FormData) {
       instagram: emptyToNull(parsed.data.instagram),
       linkedin: emptyToNull(parsed.data.linkedin),
       website: emptyToNull(parsed.data.website),
+      tiktok: emptyToNull(parsed.data.tiktok),
+      youtube: emptyToNull(parsed.data.youtube),
+      spotify: emptyToNull(parsed.data.spotify),
+      portfolioUrl: emptyToNull(parsed.data.portfolioUrl),
+      interests: emptyToNull(parsed.data.interests),
+      lookingFor: emptyToNull(parsed.data.lookingFor),
+      canOffer: emptyToNull(parsed.data.canOffer),
       updatedAt: new Date(),
     }).where(eq(schema.users.id, user.id)))
-  revalidatePath('/app/profile')
-  revalidatePath('/t', 'layout')
-}
-
-const createCampaignSchema = z.object({
-  name: z.string().trim().min(2).max(80),
-  mode: z.enum(['private', 'networking', 'creator', 'open_dm', 'event', 'business', 'portfolio', 'recruiting']),
-  question: z.string().trim().min(3).max(180),
-  messagePrompt: z.string().trim().max(180).optional(),
-})
-
-export async function createCampaign(formData: FormData) {
-  const user = await owner()
-  const parsed = createCampaignSchema.safeParse(Object.fromEntries(formData))
-  if (!parsed.success) return
-  const created = await withOwnerDb(user.id, async (db) => {
-    const [ownerRow] = await db.select().from(schema.users).where(eq(schema.users.id, user.id)).limit(1)
-    const [code] = await db.select().from(schema.codes).where(and(eq(schema.codes.userId, user.id), eq(schema.codes.kind, 'personal'))).limit(1)
-    const existing = await db.select({ id: schema.campaigns.id }).from(schema.campaigns).where(and(eq(schema.campaigns.userId, user.id), inArray(schema.campaigns.codeId, personalCodeIds(user.id))))
-    const gate = canSaveCampaign((ownerRow?.plan ?? 'free') as Plan, existing.length)
-    if (!gate.ok || !code) return false
-
-    const [campaign] = await db.insert(schema.campaigns).values({ userId: user.id, codeId: code.id, name: parsed.data.name, mode: parsed.data.mode as Mode, status: 'draft', repeatPolicy: parsed.data.mode === 'private' ? 'once_only' : 'always_open' }).returning()
-    await db.insert(schema.questionBlocks).values([
-      { campaignId: campaign.id, type: 'scale', position: 0, required: true, config: { prompt: parsed.data.question, min: 1, max: 10 } },
-      { campaignId: campaign.id, type: 'open_text', position: 1, required: false, config: { prompt: parsed.data.messagePrompt || 'Do you have a message for me?', placeholder: 'Write a short message' } },
-    ])
-    return true
-  })
-  if (!created) redirect('/app/modes?limit=1')
-  revalidatePath('/app/modes')
-  redirect('/app/modes')
-}
-
-export async function publishCampaign(formData: FormData) {
-  const user = await owner()
-  const campaignId = String(formData.get('campaignId') ?? '')
-  const published = await withOwnerDb(user.id, async (db) => {
-    const [target] = await db.select().from(schema.campaigns).where(and(eq(schema.campaigns.id, campaignId), eq(schema.campaigns.userId, user.id))).limit(1)
-    if (!target) return false
-    const [ownerRow] = await db.select().from(schema.users).where(eq(schema.users.id, user.id)).limit(1)
-    const live = await db.select({ id: schema.campaigns.id }).from(schema.campaigns).where(and(eq(schema.campaigns.userId, user.id), eq(schema.campaigns.status, 'live'), inArray(schema.campaigns.codeId, personalCodeIds(user.id))))
-    const liveWithoutTarget = live.filter((item) => item.id !== target.id).length
-    const gate = canGoLive((ownerRow?.plan ?? 'free') as Plan, liveWithoutTarget)
-    if (!gate.ok) return false
-    await db.update(schema.campaigns).set({ status: 'ended', updatedAt: new Date() }).where(and(eq(schema.campaigns.codeId, target.codeId), eq(schema.campaigns.status, 'live')))
-    await db.update(schema.campaigns).set({ status: 'live', updatedAt: new Date() }).where(and(eq(schema.campaigns.id, target.id), eq(schema.campaigns.userId, user.id)))
-    return true
-  })
-  if (!published) return
+  } catch (error) {
+    // The handle column is unique: a taken handle used to surface as an unhandled 500.
+    if (JSON.stringify(error).includes('users_handle_unique') || String(error).includes('handle')) redirect('/app/profile?error=handle')
+    throw error
+  }
   revalidatePath('/app', 'layout')
   revalidatePath('/t', 'layout')
+  redirect('/app/profile?saved=1')
 }
 
 export async function toggleCode(formData: FormData) {
@@ -118,5 +87,26 @@ export async function archiveResponse(formData: FormData) {
   const user = await owner()
   const responseId = String(formData.get('responseId') ?? '')
   await withOwnerDb(user.id, (db) => db.update(schema.responses).set({ archived: true, readAt: new Date() }).where(and(eq(schema.responses.id, responseId), eq(schema.responses.userId, user.id))))
+  revalidatePath('/app', 'layout')
+}
+
+/** Stops further responses from the sender's device/network (spec: blocking is free on every plan). */
+export async function blockSender(formData: FormData) {
+  const user = await owner()
+  const responseId = String(formData.get('responseId') ?? '')
+  await withOwnerDb(user.id, async (db) => {
+    const [response] = await db.select({ deviceHash: schema.responses.deviceHash }).from(schema.responses).where(and(eq(schema.responses.id, responseId), eq(schema.responses.userId, user.id))).limit(1)
+    if (!response?.deviceHash) return
+    await db.insert(schema.blockedDevices).values({ userId: user.id, deviceHash: response.deviceHash }).onConflictDoNothing()
+    await db.update(schema.responses).set({ blocked: true, archived: true, readAt: new Date() }).where(and(eq(schema.responses.id, responseId), eq(schema.responses.userId, user.id)))
+  })
+  revalidatePath('/app', 'layout')
+}
+
+/** Flags a response as abusive so it can be reviewed. It stays in the inbox, marked Reported. */
+export async function reportResponse(formData: FormData) {
+  const user = await owner()
+  const responseId = String(formData.get('responseId') ?? '')
+  await withOwnerDb(user.id, (db) => db.update(schema.responses).set({ flagged: true, readAt: new Date() }).where(and(eq(schema.responses.id, responseId), eq(schema.responses.userId, user.id))))
   revalidatePath('/app', 'layout')
 }

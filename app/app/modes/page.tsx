@@ -1,32 +1,59 @@
 import Link from 'next/link'
-import { and, desc, eq, inArray, sql } from 'drizzle-orm'
-import { ArrowRight, Megaphone, Plus } from '@phosphor-icons/react/dist/ssr'
-import { publishCampaign } from '@/app/app/actions'
-import { ConfirmForm } from '@/components/ConfirmForm'
+import { and, eq, inArray } from 'drizzle-orm'
+import { ArrowRight, Briefcase, Eye, Ghost, Handshake, IdentificationCard, Sparkle } from '@phosphor-icons/react/dist/ssr'
 import { PageIntro } from '@/components/workspace/PageIntro'
 import { schema, withOwnerDb } from '@/lib/db'
+import { MODE_INFO, MODE_KEYS, type ModeKey } from '@/lib/modes'
 import { requireOwner } from '@/lib/owner'
 import { personalCodeIds } from '@/lib/product'
 
-export default async function ModesPage({ searchParams }: { searchParams: Promise<{ limit?: string }> }) {
+const ICON: Record<ModeKey, typeof Sparkle> = { basic: IdentificationCard, networking: Handshake, incognito: Ghost, creator: Sparkle, portfolio: Briefcase }
+
+export default async function ModesPage() {
   const session = await requireOwner()
-  const query = await searchParams
-  // The subqueries write `campaigns.id` literally: in a one-table query Drizzle renders an
-  // interpolated column as a bare "id", which inside a subquery means the subquery's own table.
-  const rows = await withOwnerDb(session.user.id, (db) => db.select({
-    campaign: schema.campaigns,
-    responses: sql<number>`(select count(*)::int from responses r where r.campaign_id = campaigns.id)`,
-    question: sql<string | null>`(select b.config ->> 'prompt' from question_blocks b where b.campaign_id = campaigns.id order by b.position limit 1)`,
-  }).from(schema.campaigns).where(and(eq(schema.campaigns.userId, session.user.id), inArray(schema.campaigns.codeId, personalCodeIds(session.user.id)))).orderBy(desc(schema.campaigns.createdAt)))
-  const campaigns = rows.map((row) => ({ ...row.campaign, responses: row.responses, question: row.question }))
-  const liveName = campaigns.find((campaign) => campaign.status === 'live')?.name
+  const { me, live, code } = await withOwnerDb(session.user.id, async (db) => {
+    const [me] = await db.select({ plan: schema.users.plan }).from(schema.users).where(eq(schema.users.id, session.user.id)).limit(1)
+    const [live] = await db.select({ mode: schema.campaigns.mode, name: schema.campaigns.name }).from(schema.campaigns)
+      .where(and(eq(schema.campaigns.userId, session.user.id), eq(schema.campaigns.status, 'live'), inArray(schema.campaigns.codeId, personalCodeIds(session.user.id)))).limit(1)
+    const [code] = await db.select({ isLive: schema.codes.isLive }).from(schema.codes).where(and(eq(schema.codes.userId, session.user.id), eq(schema.codes.kind, 'personal'))).limit(1)
+    return { me, live, code }
+  })
+  const isPro = me?.plan !== 'free'
+  const activeKey = live && (MODE_KEYS as readonly string[]).includes(live.mode) ? (live.mode as ModeKey) : null
 
   return (
     <div className="grid gap-7">
-      <PageIntro eyebrow="Your QR experience" title="Modes" body="One code, different ways to show up. Choose which Mode is live behind your permanent QR; switching never changes the code." action={<Link href="/app/modes/new" className="action-primary"><Plus size={18} weight="bold" />New Mode</Link>} />
-      {query.limit && <div className="flex flex-col gap-3 rounded-2xl border border-[var(--accent)] bg-[var(--accent-soft)] p-5 sm:flex-row sm:items-center sm:justify-between"><div><p className="font-extrabold">You have reached the free plan limit</p><p className="mt-1 text-sm text-[var(--muted)]">Pro gives you more saved Modes.</p></div><Link className="action-primary" href="/plans">Compare plans <ArrowRight size={17} /></Link></div>}
-      <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-        {campaigns.map((campaign) => <article key={campaign.id} className="soft-card flex min-h-64 flex-col p-5"><div className="flex items-start justify-between gap-3"><span className="grid h-11 w-11 place-items-center rounded-xl bg-[var(--accent-soft)] text-[var(--accent-strong)]"><Megaphone size={22} /></span><span className={campaign.status === 'live' ? 'status-live' : 'status-draft'}>{campaign.status === 'live' ? 'Active' : campaign.status === 'draft' ? 'Saved' : 'Not active'}</span></div><h2 className="mt-7 text-xl font-extrabold tracking-[-.035em]">{campaign.name}</h2><p className="mt-2 text-sm capitalize text-[var(--muted)]">{campaign.mode.replace('_', ' ')} mode</p><p className="mt-1 text-xs text-[var(--faint)]">Created {campaign.createdAt.toLocaleDateString('en-GB', { dateStyle: 'medium' })} · {campaign.responses} {campaign.responses === 1 ? 'response' : 'responses'}</p>{campaign.question && <p className="mt-4 border-t border-[var(--line)] pt-3 text-sm text-[var(--muted)]">{campaign.question}</p>}<div className="mt-auto pt-6">{campaign.status !== 'live' ? (liveName ? <ConfirmForm action={publishCampaign} title="Change what visitors see?" message={`Your permanent QR will open "${campaign.name}" instead of "${liveName}". The QR itself does not change, and paused sharing stays paused.`} confirmLabel="Set as active" triggerLabel="Set as active" triggerClassName="action-secondary w-full"><input type="hidden" name="campaignId" value={campaign.id} /></ConfirmForm> : <form action={publishCampaign}><input type="hidden" name="campaignId" value={campaign.id} /><button className="action-secondary w-full">Set as active</button></form>) : <p className="rounded-xl bg-[var(--surface)] p-3 text-center text-xs font-bold text-[var(--accent-strong)]">Visitors see this Mode</p>}</div></article>)}
+      <PageIntro eyebrow="Your QR experience" title="Modes" body="One code. Five ways to show up. Choose what people see when they scan; your QR never changes." />
+
+      <section className="deep-card p-6 sm:p-8" aria-label="Active Mode">
+        <p className="relative text-[11px] font-extrabold uppercase tracking-[.16em] text-[var(--on-deep-muted)]">Active Mode · {code?.isLive ? 'Live on your QR' : 'Sharing paused'}</p>
+        <h2 className="relative mt-3 text-3xl font-extrabold tracking-[-.05em]">{activeKey ? MODE_INFO[activeKey].name : live ? live.name : 'No Mode'} <span className="serif-accent text-[var(--lime)]">is on.</span></h2>
+        <p className="relative mt-2 max-w-lg text-sm leading-6 text-[var(--on-deep-muted)]">{activeKey ? MODE_INFO[activeKey].blurb : 'Pick a Mode below to decide what people see.'} Switching Modes never changes your QR and never turns paused sharing back on.</p>
+        <div className="relative mt-5 flex flex-wrap gap-2">
+          {activeKey && <Link href={`/app/modes/${activeKey}/preview`} className="action-secondary !border-white !bg-white !text-[var(--deep)]"><Eye size={18} />See what others see</Link>}
+          <Link href="/app" className="action-secondary !border-white/50 !bg-transparent !text-white hover:!bg-white/10">Show my QR</Link>
+        </div>
+      </section>
+
+      <section aria-labelledby="choose">
+        <div className="mb-4 flex items-end justify-between gap-3"><h2 id="choose" className="text-xl font-extrabold tracking-[-.03em]">Choose a Mode</h2><p className="text-xs text-[var(--muted)]">3 free · 2 Pro</p></div>
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          {MODE_KEYS.map((key) => {
+            const info = MODE_INFO[key]; const Icon = ICON[key]; const active = key === activeKey
+            return (
+              <Link key={key} href={`/app/modes/${key}`} className={`soft-card group flex min-h-48 flex-col p-5 transition hover:border-[var(--accent)] ${active ? 'border-[var(--accent)]' : ''}`}>
+                <div className="flex items-start justify-between gap-3">
+                  <span className="grid h-11 w-11 place-items-center rounded-xl bg-[var(--accent-soft)] text-[var(--accent)]"><Icon size={23} /></span>
+                  {active ? <span className="status-live">Active</span> : info.pro ? <span className="plan-badge !bg-[var(--deep)] !text-[var(--lime)]">Pro</span> : <span className="plan-badge">Free</span>}
+                </div>
+                <h3 className="mt-5 text-xl font-extrabold tracking-[-.03em]">{info.name}</h3>
+                <p className="mt-1 text-sm leading-6 text-[var(--muted)]">{info.blurb}</p>
+                <span className="mt-auto inline-flex items-center gap-1 pt-4 text-sm font-bold text-[var(--accent)]">{info.pro && !isPro ? 'Preview' : 'Customise'}<ArrowRight size={16} className="transition group-hover:translate-x-0.5" /></span>
+              </Link>
+            )
+          })}
+        </div>
+        <p className="mt-4 text-sm text-[var(--muted)]">Your profile holds your information. Your Mode decides what visitors see. Incognito never shows your identity.</p>
       </section>
     </div>
   )

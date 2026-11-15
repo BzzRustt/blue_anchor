@@ -44,6 +44,8 @@ export const attendeeStatusEnum = pgEnum('attendee_status', [
 export const reactionKindEnum = pgEnum('reaction_kind', ['like', 'applaud'])
 
 export const modeEnum = pgEnum('mode', [
+  'basic',
+  'incognito',
   'private',
   'networking',
   'creator',
@@ -115,6 +117,13 @@ export const users = pgTable('users', {
   instagram: text('instagram'),
   linkedin: text('linkedin'),
   website: text('website'),
+  tiktok: text('tiktok'),
+  youtube: text('youtube'),
+  spotify: text('spotify'),
+  portfolioUrl: text('portfolio_url'),
+  interests: text('interests'),
+  lookingFor: text('looking_for'),
+  canOffer: text('can_offer'),
   plan: planEnum('plan').notNull().default('free'),
   planExpiresAt: timestamp('plan_expires_at', { withTimezone: true }),
   /** Gates Open DM (spec section 8). Not a plan gate. */
@@ -221,6 +230,8 @@ export const campaigns = pgTable(
     status: campaignStatusEnum('status').notNull().default('draft'),
     themeId: uuid('theme_id'),
     repeatPolicy: repeatPolicyEnum('repeat_policy').notNull().default('once_only'),
+    /** Mode settings (what to show, featured item, projects...). See lib/modes.ts; parsed defensively on read. */
+    config: jsonb('config').notNull().default({}),
     /** Creator mode on pro can show running poll results to visitors. */
     showResultsToVisitors: boolean('show_results_to_visitors').notNull().default(false),
     startsAt: timestamp('starts_at', { withTimezone: true }),
@@ -325,6 +336,22 @@ export const scans = pgTable(
     scannedAt: timestamp('scanned_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [index('scans_code_idx').on(t.codeId, t.scannedAt.desc())]
+)
+
+/** One row per outbound link click on a visitor page. Written by the /out redirect route only. */
+export const linkClicks = pgTable(
+  'link_clicks',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    codeId: uuid('code_id')
+      .notNull()
+      .references(() => codes.id, { onDelete: 'cascade' }),
+    campaignId: uuid('campaign_id').references(() => campaigns.id, { onDelete: 'set null' }),
+    target: text('target').notNull(),
+    sessionToken: text('session_token').notNull(),
+    clickedAt: timestamp('clicked_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index('link_clicks_code_idx').on(t.codeId, t.clickedAt.desc())]
 )
 
 /** Device hashes an owner has blocked (spec section 8). Free on every plan. */

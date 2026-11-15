@@ -14,6 +14,8 @@
 export type Plan = 'free' | 'pro' | 'studio'
 
 export type Mode =
+  | 'basic'
+  | 'incognito'
   | 'private'
   | 'networking'
   | 'creator'
@@ -241,6 +243,18 @@ export function canAddSocialLink(plan: Plan, currentCount: number): Gate {
 export function canEnableMode(mode: Mode, owner: { dobVerified: boolean }): Gate {
   if (mode === 'open_dm' && !owner.dobVerified) {
     return deny('Confirm your date of birth before turning on Open DM.')
+  }
+  return allow
+}
+
+/**
+ * The five personal Modes (spec 9.5): Basic, Networking and Incognito are free; Creator and
+ * Portfolio need Pro. Free users may PREVIEW a Pro Mode, but cannot save or activate it.
+ * The one place a Mode's price tier is decided.
+ */
+export function canActivateMode(plan: Plan, mode: string): Gate {
+  if ((mode === 'creator' || mode === 'portfolio') && !planAtLeast(plan, 'pro')) {
+    return deny('Creator and Portfolio are Pro Modes. You can preview them, but activating one needs Pro.', 'pro')
   }
   return allow
 }

@@ -52,18 +52,20 @@ REVOKE ALL ON ALL SEQUENCES IN SCHEMA public FROM app_user, auth_user, visitor_u
 
 GRANT SELECT, INSERT, UPDATE, DELETE ON
   users, codes, campaigns, question_blocks, responses, replies, scans,
-  blocked_devices, themes, theme_purchases, payouts, orders
+  blocked_devices, themes, theme_purchases, payouts, orders, link_clicks
 TO app_user;
 GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO app_user;
 
 GRANT SELECT, INSERT, UPDATE, DELETE ON users, session, account, verification TO auth_user;
 
 GRANT SELECT ON codes, campaigns, question_blocks TO visitor_user;
-GRANT SELECT (id, name, image, bio, role, company, instagram, linkedin, website)
+GRANT SELECT (id, name, image, bio, role, company, instagram, linkedin, website,
+  tiktok, youtube, spotify, portfolio_url, interests, looking_for, can_offer)
   ON users TO visitor_user;
 GRANT SELECT (id, user_id, device_hash) ON blocked_devices TO visitor_user;
 GRANT SELECT (id, code_id, session_token, submitted_at) ON responses TO visitor_user;
 GRANT INSERT (code_id, campaign_id, session_token, ip_hash) ON scans TO visitor_user;
+GRANT INSERT (code_id, campaign_id, target, session_token) ON link_clicks TO visitor_user;
 GRANT INSERT (user_id, campaign_id, code_id, session_token, answers, contact, device_hash)
   ON responses TO visitor_user;
 
@@ -81,6 +83,7 @@ ALTER TABLE question_blocks  ENABLE ROW LEVEL SECURITY;
 ALTER TABLE responses        ENABLE ROW LEVEL SECURITY;
 ALTER TABLE replies          ENABLE ROW LEVEL SECURITY;
 ALTER TABLE scans            ENABLE ROW LEVEL SECURITY;
+ALTER TABLE link_clicks      ENABLE ROW LEVEL SECURITY;
 ALTER TABLE blocked_devices  ENABLE ROW LEVEL SECURITY;
 ALTER TABLE themes           ENABLE ROW LEVEL SECURITY;
 ALTER TABLE theme_purchases  ENABLE ROW LEVEL SECURITY;
@@ -97,6 +100,7 @@ ALTER TABLE question_blocks  FORCE ROW LEVEL SECURITY;
 ALTER TABLE responses        FORCE ROW LEVEL SECURITY;
 ALTER TABLE replies          FORCE ROW LEVEL SECURITY;
 ALTER TABLE scans            FORCE ROW LEVEL SECURITY;
+ALTER TABLE link_clicks      FORCE ROW LEVEL SECURITY;
 ALTER TABLE blocked_devices  FORCE ROW LEVEL SECURITY;
 ALTER TABLE themes           FORCE ROW LEVEL SECURITY;
 ALTER TABLE theme_purchases  FORCE ROW LEVEL SECURITY;
@@ -191,6 +195,17 @@ CREATE POLICY scans_owner ON scans TO app_user
   WITH CHECK (EXISTS (
     SELECT 1 FROM codes c
     WHERE c.id = scans.code_id AND c.user_id = auth.user_id()
+  ));
+
+DROP POLICY IF EXISTS link_clicks_owner ON link_clicks;
+CREATE POLICY link_clicks_owner ON link_clicks TO app_user
+  USING (EXISTS (
+    SELECT 1 FROM codes c
+    WHERE c.id = link_clicks.code_id AND c.user_id = auth.user_id()
+  ))
+  WITH CHECK (EXISTS (
+    SELECT 1 FROM codes c
+    WHERE c.id = link_clicks.code_id AND c.user_id = auth.user_id()
   ));
 
 DROP POLICY IF EXISTS themes_read_listed ON themes;
@@ -290,6 +305,19 @@ CREATE POLICY scans_visitor_record ON scans
       SELECT 1 FROM campaigns ca
       WHERE ca.id = scans.campaign_id
         AND ca.code_id = scans.code_id
+        AND ca.status = 'live'
+    )
+  );
+
+DROP POLICY IF EXISTS link_clicks_visitor_record ON link_clicks;
+CREATE POLICY link_clicks_visitor_record ON link_clicks
+  FOR INSERT TO visitor_user
+  WITH CHECK (
+    EXISTS (SELECT 1 FROM codes c WHERE c.id = link_clicks.code_id AND c.is_live)
+    AND EXISTS (
+      SELECT 1 FROM campaigns ca
+      WHERE ca.id = link_clicks.campaign_id
+        AND ca.code_id = link_clicks.code_id
         AND ca.status = 'live'
     )
   );
