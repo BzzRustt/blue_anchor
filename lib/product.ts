@@ -128,7 +128,7 @@ export async function ownerSummary(userId: string) {
     const [responseCount, scanCount, unreadCount] = await Promise.all([
       db.select({ value: sql<number>`count(*)::int` }).from(schema.responses).where(eq(schema.responses.userId, userId)),
       db.select({ value: sql<number>`count(*)::int` }).from(schema.scans).innerJoin(schema.codes, eq(schema.scans.codeId, schema.codes.id)).where(eq(schema.codes.userId, userId)),
-      db.select({ value: sql<number>`count(*)::int` }).from(schema.responses).where(and(eq(schema.responses.userId, userId), sql`${schema.responses.readAt} is null`)),
+      db.select({ value: sql<number>`count(*)::int` }).from(schema.responses).where(and(eq(schema.responses.userId, userId), eq(schema.responses.archived, false), sql`${schema.responses.readAt} is null`)),
     ])
 
     const responses = responseCount[0]?.value ?? 0

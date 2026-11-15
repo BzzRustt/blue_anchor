@@ -12,6 +12,8 @@ ScanMe is a multi-owner QR networking product. An owner creates a permanent code
 - Public `/t/[code]` visitor experience with profile context and social links
 - Scan analytics, response validation, repeat policies, device blocking checks, and submission rate limiting
 - Neon Postgres schema with owner-scoped queries, constraints, and RLS policies
+- Password reset by email (Resend over `fetch`; needs `RESEND_API_KEY` and `EMAIL_FROM`)
+- Events: organisers create an event, issue numbered tags (optional role letters), import a roster, print badges or export CSV; attendees join at `/e/[slug]` without an account and complete a card that expires 48 hours after the event
 
 ## Stack
 
@@ -47,4 +49,4 @@ Production uses three `NOBYPASSRLS` database roles. `auth_user` can access only 
 - Profile photos currently use a hosted image URL. The environment template reserves R2 fields for direct uploads.
 - Plan comparison and server-side plan gates exist, but billing is not connected.
 
-The product rules and data model are documented in `docs/PRODUCT_SPEC.md`.
+The product rules and data model are documented in `docs/PRODUCT_SPEC.md`. `PROJECT_CONTEXT.md` describes the earlier Supabase proof of concept and is out of date.

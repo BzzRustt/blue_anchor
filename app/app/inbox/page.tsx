@@ -1,7 +1,8 @@
 import Link from 'next/link'
-import { and, desc, eq, isNull } from 'drizzle-orm'
-import { Archive, ChatCircleDots, Eye, QrCode } from '@phosphor-icons/react/dist/ssr'
-import { archiveResponse } from '@/app/app/actions'
+import { and, desc, eq, gte, isNull } from 'drizzle-orm'
+import { Archive, ChatCircleDots, Check, Eye, QrCode } from '@phosphor-icons/react/dist/ssr'
+import { archiveResponse, markResponseRead } from '@/app/app/actions'
+import { historyCutoff } from '@/lib/plans'
 import { PageIntro } from '@/components/workspace/PageIntro'
 import { schema, withOwnerDb } from '@/lib/db'
 import { requireOwner } from '@/lib/owner'
@@ -16,12 +17,17 @@ export default async function InboxPage({ searchParams }: { searchParams: Promis
     : filter === 'unread'
       ? and(eq(schema.responses.archived, false), isNull(schema.responses.readAt))
       : eq(schema.responses.archived, false)
-  const [items, summary] = await Promise.all([
-    withOwnerDb(session.user.id, (db) => db.select({ response: schema.responses, campaignName: schema.campaigns.name, mode: schema.campaigns.mode })
+  const [{ items, since }, summary] = await Promise.all([
+    withOwnerDb(session.user.id, async (db) => {
+      const [me] = await db.select({ plan: schema.users.plan }).from(schema.users).where(eq(schema.users.id, session.user.id)).limit(1)
+      const since = historyCutoff(me?.plan ?? 'free') // free plan: last 30 days only
+      const items = await db.select({ response: schema.responses, campaignName: schema.campaigns.name, mode: schema.campaigns.mode })
         .from(schema.responses)
         .leftJoin(schema.campaigns, eq(schema.campaigns.id, schema.responses.campaignId))
-        .where(and(eq(schema.responses.userId, session.user.id), shown))
-        .orderBy(desc(schema.responses.submittedAt)).limit(50)),
+        .where(and(eq(schema.responses.userId, session.user.id), shown, since ? gte(schema.responses.submittedAt, since) : undefined))
+        .orderBy(desc(schema.responses.submittedAt)).limit(50)
+      return { items, since }
+    }),
     ownerSummary(session.user.id),
   ])
 
@@ -40,10 +46,11 @@ export default async function InboxPage({ searchParams }: { searchParams: Promis
           <div className="divide-y divide-[var(--line)]">
             {items.map(({ response, campaignName, mode }) => {
               const answers = Object.values(response.answers as Record<string, unknown>).map(answerText).filter(Boolean)
-              return <article key={response.id} className="grid gap-4 p-5 sm:grid-cols-[1fr_auto] sm:items-start"><div><div className="flex flex-wrap items-center gap-2"><h3 className="font-extrabold">{campaignName ?? 'Deleted campaign'}</h3>{mode && <span className="status-draft capitalize">{mode.replace('_', ' ')}</span>} {!response.readAt && <span className="status-live">New</span>}</div><div className="mt-3 grid gap-2">{answers.length ? answers.map((answer, index) => <p key={`${response.id}-${index}`} className="text-sm leading-6 text-[var(--muted)]">{answer}</p>) : <p className="text-sm text-[var(--faint)]">No written answer</p>}</div><time className="mt-3 block text-xs text-[var(--faint)]">{response.submittedAt.toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short' })}</time></div>{filter !== 'archived' && <form action={archiveResponse}><input type="hidden" name="responseId" value={response.id} /><button className="action-secondary" title="Archive response"><Archive size={18} />Archive</button></form>}</article>
+              return <article key={response.id} className="grid gap-4 p-5 sm:grid-cols-[1fr_auto] sm:items-start"><div><div className="flex flex-wrap items-center gap-2"><h3 className="font-extrabold">{campaignName ?? 'Deleted campaign'}</h3>{mode && <span className="status-draft capitalize">{mode.replace('_', ' ')}</span>} {!response.readAt && <span className="status-live">New</span>}</div><div className="mt-3 grid gap-2">{answers.length ? answers.map((answer, index) => <p key={`${response.id}-${index}`} className="text-sm leading-6 text-[var(--muted)]">{answer}</p>) : <p className="text-sm text-[var(--faint)]">No written answer</p>}</div><time className="mt-3 block text-xs text-[var(--faint)]">{response.submittedAt.toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short' })}</time></div>{filter !== 'archived' && <div className="flex flex-wrap gap-2">{!response.readAt && <form action={markResponseRead}><input type="hidden" name="responseId" value={response.id} /><button className="action-secondary" title="Mark as read"><Check size={18} />Mark read</button></form>}<form action={archiveResponse}><input type="hidden" name="responseId" value={response.id} /><button className="action-secondary" title="Archive response"><Archive size={18} />Archive</button></form></div>}</article>
             })}
           </div>
         )}
+        {since && <p className="border-t border-[var(--line)] px-5 py-3 text-xs text-[var(--muted)]">The free plan shows responses from the last 30 days.</p>}
       </section>
     </div>
   )

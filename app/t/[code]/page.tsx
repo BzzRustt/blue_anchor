@@ -1,8 +1,12 @@
+import type { Metadata } from 'next'
 import Image from 'next/image'
 import { InstagramLogo, LinkedinLogo, LinkSimple, Scan } from '@phosphor-icons/react/dist/ssr'
 import { notFound } from 'next/navigation'
 import { VisitorForm } from '@/components/VisitorForm'
 import { getVisitorExperience } from '@/lib/product'
+
+// Personal pages are reached by scanning, not searching: keep them out of search engines.
+export const metadata: Metadata = { robots: { index: false, follow: false } }
 
 function safeUrl(value: string | null) {
   if (!value) return null

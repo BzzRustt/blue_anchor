@@ -1,6 +1,6 @@
 import Link from 'next/link'
 import Image from 'next/image'
-import { and, eq, isNull, sql } from 'drizzle-orm'
+import { and, eq, gte, isNull, sql } from 'drizzle-orm'
 import { Scan } from '@phosphor-icons/react/dist/ssr'
 import { Brand } from '@/components/Brand'
 import { ThemeToggle } from '@/components/ThemeToggle'
@@ -8,6 +8,7 @@ import { SignOutButton } from '@/components/workspace/SignOutButton'
 import { WorkspaceNav } from '@/components/workspace/WorkspaceNav'
 import { schema, withOwnerDb } from '@/lib/db'
 import { requireOwner } from '@/lib/owner'
+import { historyCutoff } from '@/lib/plans'
 
 export default async function WorkspaceLayout({ children }: { children: React.ReactNode }) {
   const session = await requireOwner()
@@ -17,8 +18,9 @@ export default async function WorkspaceLayout({ children }: { children: React.Re
   // waiting, and the link the "Scan preview" button opens.
   const { owner, unread, slug } = await withOwnerDb(userId, async (db) => {
     const [owner] = await db.select({ name: schema.users.name, plan: schema.users.plan, image: schema.users.image }).from(schema.users).where(eq(schema.users.id, userId)).limit(1)
+    const since = historyCutoff(owner?.plan ?? 'free')
     const [{ count }] = await db.select({ count: sql<number>`count(*)::int` }).from(schema.responses)
-      .where(and(eq(schema.responses.userId, userId), eq(schema.responses.archived, false), isNull(schema.responses.readAt)))
+      .where(and(eq(schema.responses.userId, userId), eq(schema.responses.archived, false), isNull(schema.responses.readAt), since ? gte(schema.responses.submittedAt, since) : undefined))
     const [code] = await db.select({ slug: schema.codes.slug }).from(schema.codes)
       .where(and(eq(schema.codes.userId, userId), eq(schema.codes.kind, 'personal'))).limit(1)
     return { owner, unread: count, slug: code?.slug }

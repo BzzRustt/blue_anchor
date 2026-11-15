@@ -107,6 +107,13 @@ export async function toggleCode(formData: FormData) {
   revalidatePath('/app/code')
 }
 
+export async function markResponseRead(formData: FormData) {
+  const user = await owner()
+  const responseId = String(formData.get('responseId') ?? '')
+  await withOwnerDb(user.id, (db) => db.update(schema.responses).set({ readAt: new Date() }).where(and(eq(schema.responses.id, responseId), eq(schema.responses.userId, user.id))))
+  revalidatePath('/app', 'layout')
+}
+
 export async function archiveResponse(formData: FormData) {
   const user = await owner()
   const responseId = String(formData.get('responseId') ?? '')
