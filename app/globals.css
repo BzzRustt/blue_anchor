@@ -4,54 +4,64 @@
 
 :root {
   color-scheme: light;
-  /* Paper, forest and lime — from the Mid-Nov prototype. Names are unchanged so components
-     do not churn; --accent stays a green that works as BOTH a fill and a text colour. */
-  --page: #f8f8f1;
-  --surface: #f1f4e8;
+  /* Paper, pine and pale lime — from prototypes/ScanMe_Interactive_Prototype_updated.html.
+     Names are unchanged so components do not churn. --accent (pine) works as a fill with white
+     text AND as text on paper. Muted is darker than the prototype's #78847b (3.6:1) to pass 4.5:1. */
+  --page: #f6f5f0;
+  --surface: #f9faf6;
   --surface-strong: #ffffff;
-  --surface-muted: #e8efdb;
-  --ink: #18211c;
-  --muted: #536057;
-  --faint: #5d6b62;
-  --line: #dce1d5;
-  --accent: #38663b;
-  --accent-strong: #264a2c;
-  --accent-soft: #e5efc8;
+  --surface-muted: #ecf0e4;
+  --ink: #1c2924;
+  --muted: #5d6a61;
+  --faint: #5d6a61;
+  --line: #e4e7e0;
+  --accent: #21483a;
+  --accent-strong: #15362d;
+  --accent-soft: #e7efe5;
   --on-accent: #ffffff;
-  /* Lime is for primary buttons and highlights on deep green only: never as text on paper. */
-  --lime: #daf174;
-  --lime-hover: #c9e65c;
-  --on-lime: #172716;
-  --deep: #0b2219;
-  --side: #0b2219;
-  --side-hover: #203d30;
-  --side-ink: #c6d5cc;
+  /* Pale lime: highlights on deep green (text or chips), never text on paper. */
+  --lime: #d9e7b6;
+  --lime-hover: #cbdca2;
+  --on-lime: #15362d;
+  --deep: #15362d;
+  --on-deep: #ffffff;
+  --on-deep-muted: #c3d2c8;
+  --terra: #ae7458;
+  --side: #fcfcf9;
+  --side-hover: #e8eee4;
+  --side-ink: #4f5d53;
+  --side-active: #15362d;
   --danger: #932c39;
   --warning: #8d641d;
-  --shadow: 0 22px 50px rgba(32, 58, 34, 0.14);
+  --radius: 13px;
+  --shadow: 0 18px 48px rgba(18, 48, 31, 0.09);
 }
 
 html[data-theme='dark'] {
   color-scheme: dark;
-  --page: #0a1810;
-  --surface: #10261a;
-  --surface-strong: #142e21;
-  --surface-muted: #1c3a2b;
-  --ink: #eef3e6;
-  --muted: #b0c2b4;
-  --faint: #92a597;
-  --line: #2b4a3a;
-  --accent: #a8d05f;
-  --accent-strong: #c4e47f;
-  --accent-soft: #233f2a;
-  --on-accent: #0b2219;
-  --lime: #daf174;
-  --lime-hover: #c9e65c;
-  --on-lime: #172716;
-  --deep: #0b2219;
-  --side: #07140d;
-  --side-hover: #14301f;
-  --side-ink: #b9cdc0;
+  --page: #0f1a15;
+  --surface: #14231c;
+  --surface-strong: #182a22;
+  --surface-muted: #1f3329;
+  --ink: #eef2ea;
+  --muted: #a9b8ad;
+  --faint: #9aa89e;
+  --line: #2b4036;
+  --accent: #b8d8a8;
+  --accent-strong: #d3e8c6;
+  --accent-soft: #1f3a2c;
+  --on-accent: #0f241a;
+  --lime: #d9e7b6;
+  --lime-hover: #cbdca2;
+  --on-lime: #15362d;
+  --deep: #1d4436;
+  --on-deep: #ffffff;
+  --on-deep-muted: #c3d2c8;
+  --terra: #d39a7d;
+  --side: #121f19;
+  --side-hover: #1f3329;
+  --side-ink: #a9b8ad;
+  --side-active: #eef2ea;
   --danger: #f19aa4;
   --warning: #dfb56c;
   --shadow: 0 26px 70px rgba(0, 0, 0, 0.4);
@@ -100,9 +110,33 @@ input[type='range'] { accent-color: var(--accent); }
 
 .soft-card {
   border: 1px solid var(--line);
-  border-radius: 22px;
+  border-radius: var(--radius);
   background: var(--surface-strong);
 }
+
+/* Deep pine panel (My ScanMe card, event banners): white text, pale-lime chips. */
+.deep-card {
+  position: relative;
+  overflow: hidden;
+  border-radius: var(--radius);
+  color: var(--on-deep);
+  background: var(--deep);
+}
+
+/* The prototype's serif-italic accent word ("Networking Mode"). */
+.serif-accent { font-family: Georgia, 'Iowan Old Style', serif; font-style: italic; font-weight: 400; letter-spacing: -.03em; }
+
+.overline {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: .14em;
+  text-transform: uppercase;
+}
+.overline::before { content: ''; width: 7px; height: 7px; border-radius: 2px; background: color-mix(in srgb, var(--accent) 45%, var(--page)); }
 
 .action-primary,
 .action-secondary,
@@ -113,7 +147,7 @@ input[type='range'] { accent-color: var(--accent); }
   align-items: center;
   justify-content: center;
   gap: 8px;
-  border-radius: 10px;
+  border-radius: 9px;
   padding: 0 17px;
   font-weight: 700;
   line-height: 1;
@@ -127,12 +161,12 @@ input[type='range'] { accent-color: var(--accent); }
 .action-danger:active { transform: translateY(1px) scale(.99); }
 
 .action-primary {
-  border: 1px solid color-mix(in srgb, var(--lime) 62%, var(--deep));
-  color: var(--on-lime);
-  background: var(--lime);
+  border: 1px solid var(--accent);
+  color: var(--on-accent);
+  background: var(--accent);
 }
 
-.action-primary:hover { background: var(--lime-hover); }
+.action-primary:hover { background: var(--accent-strong); }
 
 .action-secondary {
   border: 1px solid var(--line);
@@ -191,8 +225,8 @@ input[type='range'] { accent-color: var(--accent); }
   display: inline-flex;
   width: fit-content;
   align-items: center;
-  border-radius: 999px;
-  padding: 5px 9px;
+  border-radius: 6px;
+  padding: 5px 8px;
   font-size: 12px;
   font-weight: 700;
 }

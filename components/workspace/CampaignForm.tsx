@@ -54,7 +54,7 @@ export function CampaignForm() {
       <section className="soft-card p-5 sm:p-7">
         <h2 className="text-lg font-extrabold">2. Shape the experience</h2>
         <div className="mt-5 grid gap-5">
-          <label className="field-label">Campaign name<input className="field-input" name="name" required maxLength={80} value={values.name} onChange={(event) => setValues((current) => ({ ...current, name: event.target.value }))} /></label>
+          <label className="field-label">Mode name<input className="field-input" name="name" required maxLength={80} value={values.name} onChange={(event) => setValues((current) => ({ ...current, name: event.target.value }))} /></label>
           <label className="field-label">Rating question<input className="field-input" name="question" required maxLength={180} value={values.question} onChange={(event) => setValues((current) => ({ ...current, question: event.target.value }))} /></label>
           <label className="field-label">Message prompt<input className="field-input" name="messagePrompt" maxLength={180} value={values.prompt} onChange={(event) => setValues((current) => ({ ...current, prompt: event.target.value }))} /></label>
           <button className="action-primary mt-2">Save draft</button>

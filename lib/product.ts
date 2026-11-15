@@ -1,6 +1,7 @@
 import crypto from 'node:crypto'
 import { and, asc, desc, eq, sql } from 'drizzle-orm'
 import { schema, visitorDb, withOwnerDb } from '@/lib/db'
+import { historyCutoff } from '@/lib/plans'
 
 export type QuestionConfig = {
   prompt: string
@@ -54,6 +55,8 @@ export async function ensureOwnerSetup(userId: string, name: string) {
         userId,
         slug: createSlug(name),
         label: 'My ScanMe',
+        // Spec: personal sharing starts OFF; the owner turns it on from Home after previewing.
+        isLive: false,
       }).returning()
     }
 
@@ -123,17 +126,42 @@ export async function getVisitorExperience(slug: string): Promise<VisitorExperie
   }
 }
 
-export async function ownerSummary(userId: string) {
-  return withOwnerDb(userId, async (db) => {
-    const [responseCount, scanCount, unreadCount] = await Promise.all([
-      db.select({ value: sql<number>`count(*)::int` }).from(schema.responses).where(eq(schema.responses.userId, userId)),
-      db.select({ value: sql<number>`count(*)::int` }).from(schema.scans).innerJoin(schema.codes, eq(schema.scans.codeId, schema.codes.id)).where(eq(schema.codes.userId, userId)),
-      db.select({ value: sql<number>`count(*)::int` }).from(schema.responses).where(and(eq(schema.responses.userId, userId), eq(schema.responses.archived, false), sql`${schema.responses.readAt} is null`)),
-    ])
+const LONDON_DAY = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/London', year: 'numeric', month: '2-digit', day: '2-digit' })
 
-    const responses = responseCount[0]?.value ?? 0
-    const scans = scanCount[0]?.value ?? 0
-    return { responses, scans, unread: unreadCount[0]?.value ?? 0, conversion: scans > 0 ? Math.round((responses / scans) * 100) : 0 }
+/**
+ * Everything the Home tab shows, personal only: event codes, scans and attendees never count
+ * here (spec: "Do not mix event registration or event networking metrics into these personal
+ * statistics"). `since` is the plan's history window (free: 30 days), applied to responses.
+ */
+export async function homeData(userId: string) {
+  return withOwnerDb(userId, async (db) => {
+    const [me] = await db.select({ plan: schema.users.plan }).from(schema.users).where(eq(schema.users.id, userId)).limit(1)
+    const plan = me?.plan ?? 'free'
+    const since = historyCutoff(plan)
+    const responseWindow = since ? sql`and submitted_at >= ${since}` : sql``
+    const [code] = await db.select({ id: schema.codes.id, slug: schema.codes.slug, isLive: schema.codes.isLive }).from(schema.codes)
+      .where(and(eq(schema.codes.userId, userId), eq(schema.codes.kind, 'personal'))).limit(1)
+    const campaigns = await db.select({ id: schema.campaigns.id, name: schema.campaigns.name, mode: schema.campaigns.mode, status: schema.campaigns.status }).from(schema.campaigns)
+      .where(sql`${schema.campaigns.codeId} in ${personalCodeIds(userId)}`).orderBy(desc(schema.campaigns.createdAt))
+    const [counts] = await db.execute<{ unread: number; responses: number; responses30: number; visits30: number }>(sql`
+      select
+        (select count(*)::int from responses where user_id = ${userId} and archived = false and read_at is null ${responseWindow}) as unread,
+        (select count(*)::int from responses where user_id = ${userId} ${responseWindow}) as responses,
+        (select count(*)::int from responses where user_id = ${userId} and submitted_at >= now() - interval '30 days') as responses30,
+        (select count(*)::int from scans where code_id in ${personalCodeIds(userId)} and scanned_at >= now() - interval '30 days') as visits30`).then((r) => r.rows)
+    const perDay = await db.execute<{ day: string; n: number }>(sql`
+      select to_char(scanned_at at time zone 'Europe/London', 'YYYY-MM-DD') as day, count(*)::int as n
+      from scans where code_id in ${personalCodeIds(userId)} and scanned_at >= now() - interval '8 days' group by 1`).then((r) => r.rows)
+
+    // Seven London calendar days ending today, labelled in London time too (the old chart
+    // bucketed by UTC date but labelled in local time, so late-evening visits landed a day off).
+    const days = Array.from({ length: 7 }, (_, index) => {
+      const date = new Date(Date.now() - (6 - index) * 86_400_000)
+      const key = LONDON_DAY.format(date)
+      return { key, label: date.toLocaleDateString('en-GB', { weekday: 'short', timeZone: 'Europe/London' }), count: perDay.find((row) => row.day === key)?.n ?? 0 }
+    })
+
+    return { plan, since, code, campaigns, active: campaigns.find((c) => c.status === 'live') ?? null, counts, days }
   })
 }
 

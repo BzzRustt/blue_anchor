@@ -74,9 +74,9 @@ export async function createCampaign(formData: FormData) {
     ])
     return true
   })
-  if (!created) redirect('/app/campaigns?limit=1')
-  revalidatePath('/app/campaigns')
-  redirect('/app/campaigns')
+  if (!created) redirect('/app/modes?limit=1')
+  revalidatePath('/app/modes')
+  redirect('/app/modes')
 }
 
 export async function publishCampaign(formData: FormData) {
@@ -95,7 +95,7 @@ export async function publishCampaign(formData: FormData) {
     return true
   })
   if (!published) return
-  revalidatePath('/app/campaigns')
+  revalidatePath('/app', 'layout')
   revalidatePath('/t', 'layout')
 }
 
@@ -104,7 +104,7 @@ export async function toggleCode(formData: FormData) {
   const codeId = String(formData.get('codeId') ?? '')
   const enabled = String(formData.get('enabled')) === 'true'
   await withOwnerDb(user.id, (db) => db.update(schema.codes).set({ isLive: enabled }).where(and(eq(schema.codes.id, codeId), eq(schema.codes.userId, user.id))))
-  revalidatePath('/app/code')
+  revalidatePath('/app', 'layout')
 }
 
 export async function markResponseRead(formData: FormData) {
@@ -118,5 +118,5 @@ export async function archiveResponse(formData: FormData) {
   const user = await owner()
   const responseId = String(formData.get('responseId') ?? '')
   await withOwnerDb(user.id, (db) => db.update(schema.responses).set({ archived: true, readAt: new Date() }).where(and(eq(schema.responses.id, responseId), eq(schema.responses.userId, user.id))))
-  revalidatePath('/app/inbox')
+  revalidatePath('/app', 'layout')
 }

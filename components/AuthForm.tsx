@@ -29,7 +29,7 @@ export function AuthForm({ mode }: { mode: 'login' | 'signup' }) {
       return
     }
 
-    router.push('/app/inbox')
+    router.push('/app')
     router.refresh()
   }
 

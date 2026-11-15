@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation'
 import { useState } from 'react'
 import { authClient } from '@/lib/auth-client'
 
-/** `onDark` is for the deep-green sidebar, where the default muted text would be unreadable. */
+/** `onDark` is for deep-green surfaces, where the default muted text would be unreadable. */
 export function SignOutButton({ onDark = false }: { onDark?: boolean }) {
   const router = useRouter()
   const [pending, setPending] = useState(false)
