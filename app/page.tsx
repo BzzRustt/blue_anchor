@@ -2,135 +2,129 @@ import Image from 'next/image'
 import Link from 'next/link'
 import {
   ArrowRight,
-  Briefcase,
+  CalendarCheck,
   ChatCircleDots,
+  DownloadSimple,
+  Hash,
   IdentificationCard,
   QrCode,
-  SlidersHorizontal,
   Storefront,
   UsersThree,
 } from '@phosphor-icons/react/dist/ssr'
 import { MarketingFooter } from '@/components/MarketingFooter'
 import { MarketingHeader } from '@/components/MarketingHeader'
+import { PLAN_LIMITS } from '@/lib/plans'
 import heroImage from '@/prototype-assets/scanme-hero-clear-v3.png'
-import discoverImage from '@/prototype-assets/scanme-step-discover-man-v3.png'
-import customiseImage from '@/prototype-assets/scanme-step-customise-man-v3.png'
 import socialiseImage from '@/prototype-assets/scanme-step-socialise-v2.png'
 
-const uses = [
-  {
-    icon: UsersThree,
-    title: 'Network with intent',
-    body: 'Show your role, goals, and socials before the first hello, so the right people know why to connect.',
-  },
-  {
-    icon: ChatCircleDots,
-    title: 'Collect honest answers',
-    body: 'Ask for a rating, a private note, or a quick opinion without asking visitors to create an account.',
-  },
-  {
-    icon: Storefront,
-    title: 'Move interest forward',
-    body: 'Send scanners to your portfolio, latest release, booking page, shop, or the link that matters today.',
-  },
-  {
-    icon: Briefcase,
-    title: 'Run an event or business',
-    body: 'Use one permanent code for guest feedback, customer insight, public information, and changing campaigns.',
-  },
-]
+/*
+ * Events lead, the personal code follows. Everything below describes what exists today:
+ * tags, printable badges, spare tags and cards guests fill in. The directory, search and
+ * connect features are not built, so this page must not promise them.
+ */
+
+const steps = [
+  { icon: CalendarCheck, title: 'Create the event', body: 'Name it, set the times and choose the four questions every guest answers. You get a permanent link and a short access code.' },
+  { icon: Hash, title: 'Print the badges', body: 'Add your guest list and every person gets a numbered tag with a QR on it. Download the CSV for your printer, or print the sheet.' },
+  { icon: IdentificationCard, title: 'Guests add their card', body: 'They scan their badge or open your link, then say what they do and what they are looking for. No account needed.' },
+] as const
+
+const organiser = [
+  { title: 'Tags you can read across a room', body: 'Plain numbers like 042, or role letters like F-042 on Pro, so you can tell a founder from an investor before you say hello.' },
+  { title: 'Spare tags for walk-ups', body: 'Print extras for people who register on arrival. They scan, answer, and join in a minute.' },
+  { title: 'Cards guests fill in themselves', body: 'A name, a role and your four questions. Guests can edit or withdraw their card whenever they like.' },
+  { title: 'Private by design', body: 'Guest emails are never shown to other guests, and cards close 48 hours after your event ends.' },
+] as const
+
+const keepsake = [
+  { icon: UsersThree, title: 'Network with intent', body: 'Show your role, goals and socials before the first hello.' },
+  { icon: ChatCircleDots, title: 'Collect honest answers', body: 'Ask for a rating or a private note without asking anyone to sign up.' },
+  { icon: Storefront, title: 'Move interest forward', body: 'Send scanners to your portfolio, booking page or the link that matters today.' },
+] as const
 
 export default function HomePage() {
+  const free = PLAN_LIMITS.free
+
   return (
     <>
       <MarketingHeader />
       <main>
-        <section className="site-shell grid min-h-[calc(100dvh-72px)] items-center gap-9 py-8 lg:grid-cols-[.82fr_1.18fr] lg:py-10">
-          <div className="max-w-[590px]">
-            <p className="mb-4 text-sm font-bold uppercase tracking-[.14em] text-[var(--accent-strong)]">A better first scan</p>
-            <h1 className="max-w-[10ch] text-[clamp(3.25rem,6vw,5.6rem)] font-extrabold leading-[.94] tracking-[-.075em]">
-              Make networking easier. Make it count.
-            </h1>
-            <p className="mt-6 max-w-[530px] text-[clamp(1rem,1.3vw,1.2rem)] leading-7 text-[var(--muted)]">
-              Scan a code, understand who someone is, and connect only when the conversation has somewhere to go.
-            </p>
-            <div className="mt-7 flex flex-wrap gap-3">
-              <Link className="action-primary" href="/signup">Create your code <ArrowRight size={18} weight="bold" /></Link>
-              <Link className="action-secondary" href="/how-it-works">See how it works</Link>
+        <section className="site-shell pt-5 sm:pt-6">
+          <div className="grid overflow-hidden rounded-[22px] bg-[var(--deep)] text-white sm:rounded-[30px] lg:min-h-[520px] lg:grid-cols-[1.02fr_1fr]">
+            <div className="flex flex-col items-start justify-center p-6 sm:p-12 lg:p-16">
+              <p className="text-xs font-bold uppercase tracking-[.12em] text-[var(--lime)]">Event networking · Personal QR</p>
+              <h1 className="my-5 text-[clamp(2.9rem,6.2vw,5.9rem)] font-extrabold leading-[.92] tracking-[-.075em]">A tag for every guest.<br /><span className="text-[var(--lime)]">A reason to connect.</span></h1>
+              <p className="max-w-[430px] text-[clamp(1rem,1.4vw,1.15rem)] leading-7 text-[#d6e3d9]">Give each attendee a numbered tag and a short card about what they do and what they are looking for. Anyone can then get their own ScanMe code to keep.</p>
+              <div className="mt-7 flex flex-wrap gap-3">
+                <Link className="action-primary" href="/signup">Run an event <ArrowRight size={18} weight="bold" /></Link>
+                <Link className="action-secondary !border-[#557264] !bg-transparent !text-white hover:!bg-[#214436]" href="/how-it-works">See how it works</Link>
+              </div>
+              <p className="mt-5 text-sm text-[#bdd2c6]">Just want your own code? <Link className="font-bold text-[var(--lime)] underline underline-offset-4" href="/signup">Create yours</Link></p>
             </div>
-          </div>
 
-          <div className="relative min-h-[500px] overflow-hidden rounded-[20px] bg-[var(--surface-muted)] shadow-[var(--shadow)] sm:min-h-[590px] lg:h-[min(680px,calc(100dvh-118px))]">
-            <Image
-              src={heroImage}
-              alt="A woman scanning a QR code worn by a man at a gallery event"
-              fill
-              priority
-              sizes="(min-width: 1024px) 58vw, 100vw"
-              className="object-cover object-center"
-            />
-            <div className="absolute bottom-4 right-4 top-4 w-[min(270px,42%)] min-w-[220px] overflow-hidden rounded-[36px] border-[7px] border-[#26312b] bg-[var(--surface-strong)] shadow-[0_26px_62px_rgba(11,28,19,.28)] sm:bottom-auto sm:top-1/2 sm:h-[510px] sm:-translate-y-1/2">
-              <div className="absolute left-1/2 top-2 h-5 w-[76px] -translate-x-1/2 rounded-full bg-[#26312b]" />
-              <div className="flex h-full flex-col overflow-hidden px-4 pb-4 pt-10">
-                <div className="mb-4 h-1 overflow-hidden rounded-full bg-[var(--surface-muted)]"><div className="h-full w-3/4 bg-[var(--accent)]" /></div>
-                <div className="text-center">
-                  <div className="mx-auto grid h-14 w-14 place-items-center rounded-full bg-[var(--accent-soft)] text-lg font-extrabold text-[var(--accent-strong)]">AK</div>
-                  <h2 className="mt-2 text-xl font-extrabold tracking-[-.04em]">Allen K.</h2>
-                  <p className="mt-1 text-[11px] leading-4 text-[var(--muted)]">Product designer building better ways for people to meet.</p>
-                  <a className="mt-2 inline-flex text-[11px] font-bold text-[var(--accent-strong)]" href="#uses">@allen.builds</a>
-                </div>
-                <div className="mt-4 rounded-[15px] border border-[var(--line)] bg-[var(--surface)] p-3">
-                  <p className="text-xs font-bold">Rate my drip from 1 to 10</p>
-                  <div className="mt-2 flex items-center gap-2"><strong className="text-2xl text-[var(--accent-strong)]">8</strong><input aria-label="Sample rating" className="min-w-0 flex-1" type="range" value="8" readOnly min="1" max="10" /></div>
-                  <p className="mt-3 text-[11px] font-bold">Do you have a message for me?</p>
-                  <div className="mt-2 min-h-[58px] rounded-[10px] border border-[var(--line)] bg-[var(--surface-strong)] p-2 text-[10px] text-[var(--faint)]">Say something real</div>
-                  <button className="mt-3 min-h-9 w-full rounded-[10px] bg-[var(--accent)] text-[10px] font-bold text-[var(--on-accent)]" type="button">Send privately</button>
-                </div>
-                <p className="mt-2 text-center text-[9px] text-[var(--faint)]">Only Allen can read this</p>
+            <div className="relative min-h-[320px] sm:min-h-[420px]">
+              <Image
+                src={heroImage}
+                alt="A woman scanning a QR code worn by a man at a gallery event"
+                fill
+                priority
+                sizes="(min-width: 1024px) 50vw, 100vw"
+                className="object-cover object-[48%_center]"
+              />
+              <div className="absolute bottom-4 right-4 flex items-center gap-3 rounded-[13px] bg-[#f9faf2] p-3 pr-4 text-[#18211c] shadow-[0_8px_30px_rgba(16,29,18,.3)]">
+                <span className="grid h-11 w-11 place-items-center rounded-[9px] border border-[#dce1d5] bg-white"><QrCode size={30} weight="bold" /></span>
+                <div className="leading-tight"><strong className="block font-mono text-xl tracking-wide">F-042</strong><span className="text-xs text-[#536057]">Founder · scan to add your card</span></div>
               </div>
             </div>
           </div>
         </section>
 
-        <section className="site-shell py-20 md:py-24">
+        <section id="events" className="site-shell scroll-mt-24 py-16 md:py-24">
           <div className="max-w-2xl">
-            <h2 className="text-4xl font-extrabold leading-none tracking-[-.06em] md:text-6xl">From scan to a better introduction.</h2>
-            <p className="mt-5 max-w-xl text-lg leading-7 text-[var(--muted)]">Your QR stays the same. Change the profile, questions, and reason to connect whenever your context changes.</p>
+            <p className="text-xs font-bold uppercase tracking-[.12em] text-[var(--accent-strong)]">For events</p>
+            <h2 className="mt-3 text-4xl font-extrabold leading-none tracking-[-.06em] md:text-6xl">Make the room easier to read.</h2>
+            <p className="mt-5 max-w-xl text-lg leading-7 text-[var(--muted)]">Fifty strangers, one evening, and no way to tell who to talk to. Give everyone a tag and a card, and the room starts to make sense.</p>
           </div>
           <div className="mt-10 grid gap-4 md:grid-cols-3">
-            {[
-              { image: discoverImage, icon: QrCode, title: 'Scan and sign up', body: 'Discover ScanMe from a card, scan the code, and create your free profile.' },
-              { image: customiseImage, icon: SlidersHorizontal, title: 'Choose your intent', body: 'Pick a use, shape your questions, and create the experience behind your code.' },
-              { image: socialiseImage, icon: IdentificationCard, title: 'Go socialise', body: 'Wear or share your code so the right people understand why they should connect.' },
-            ].map((step) => (
-              <article key={step.title} className="soft-card overflow-hidden">
-                <div className="relative aspect-[3/2]"><Image src={step.image} alt="" fill sizes="(min-width: 768px) 33vw, 100vw" className="object-cover" /></div>
-                <div className="p-5">
-                  <h3 className="flex items-center gap-2 text-lg font-extrabold"><step.icon size={21} weight="bold" className="text-[var(--accent)]" />{step.title}</h3>
-                  <p className="mt-2 text-sm leading-6 text-[var(--muted)]">{step.body}</p>
-                </div>
+            {steps.map((step, index) => (
+              <article key={step.title} className="soft-card p-6">
+                <span className="grid h-12 w-12 place-items-center rounded-[13px] bg-[var(--accent-soft)] text-[var(--accent-strong)]"><step.icon size={25} weight="bold" /></span>
+                <p className="mt-5 text-xs font-bold uppercase tracking-[.12em] text-[var(--faint)]">Step {index + 1}</p>
+                <h3 className="mt-1 text-xl font-extrabold tracking-[-.035em]">{step.title}</h3>
+                <p className="mt-2 text-sm leading-6 text-[var(--muted)]">{step.body}</p>
               </article>
             ))}
           </div>
-        </section>
 
-        <section id="uses" className="site-shell pb-20 md:pb-24">
-          <h2 className="max-w-3xl text-4xl font-extrabold leading-none tracking-[-.06em] md:text-6xl">One code, many reasons to connect.</h2>
-          <p className="mt-5 max-w-xl text-lg leading-7 text-[var(--muted)]">Change what people learn, what they can answer, and where their interest goes.</p>
-          <div className="mt-10 grid overflow-hidden rounded-[20px] border border-[var(--line)] bg-[var(--surface-strong)] md:grid-cols-2">
-            {uses.map((use, index) => (
-              <article key={use.title} className={`grid min-h-52 grid-cols-[52px_1fr] gap-5 p-7 md:p-10 ${index === 1 || index === 2 ? 'bg-[var(--accent-soft)]' : ''} ${index < 2 ? 'border-b border-[var(--line)]' : ''} ${index % 2 === 0 ? 'md:border-r md:border-[var(--line)]' : ''}`}>
-                <span className="grid h-[52px] w-[52px] place-items-center rounded-[15px] bg-[var(--accent)] text-[var(--on-accent)]"><use.icon size={26} weight="bold" /></span>
-                <div><h3 className="text-2xl font-extrabold tracking-[-.045em]">{use.title}</h3><p className="mt-2 max-w-md text-sm leading-6 text-[var(--muted)]">{use.body}</p></div>
+          <div className="mt-4 grid overflow-hidden rounded-[22px] border border-[var(--line)] bg-[var(--surface-strong)] md:grid-cols-2">
+            {organiser.map((item, index) => (
+              <article key={item.title} className={`p-7 md:p-9 ${index < 2 ? 'border-b border-[var(--line)]' : ''} ${index % 2 === 0 ? 'md:border-r md:border-[var(--line)]' : ''}`}>
+                <h3 className="text-xl font-extrabold tracking-[-.035em]">{item.title}</h3>
+                <p className="mt-2 max-w-md text-sm leading-6 text-[var(--muted)]">{item.body}</p>
               </article>
             ))}
           </div>
+
+          <div className="mt-6 flex flex-col items-start gap-4 sm:flex-row sm:items-center sm:justify-between">
+            <p className="flex items-center gap-2 text-sm text-[var(--muted)]"><DownloadSimple size={18} weight="bold" className="shrink-0 text-[var(--accent)]" />Free to start: {free.eventsPerYear} events a year, up to {free.attendeesPerEvent} guests each.</p>
+            <Link className="action-primary" href="/signup">Create your first event <ArrowRight size={18} weight="bold" /></Link>
+          </div>
         </section>
 
-        <section className="site-shell">
-          <div className="grid items-center gap-6 rounded-[20px] bg-[var(--accent-soft)] p-7 md:grid-cols-[1fr_auto] md:p-12">
-            <div><h2 className="text-4xl font-extrabold tracking-[-.055em]">Make the next room easier to read.</h2><p className="mt-3 text-[var(--muted)]">Start free, publish one campaign, and change it without replacing your QR.</p></div>
-            <Link className="action-primary" href="/signup">Create your code <ArrowRight size={18} weight="bold" /></Link>
+        <section id="keepsake" className="site-shell scroll-mt-24 pb-16 md:pb-24">
+          <div className="grid items-center gap-8 overflow-hidden rounded-[22px] bg-[var(--accent-soft)] lg:grid-cols-[.95fr_1.05fr]">
+            <div className="relative min-h-[300px] self-stretch lg:min-h-[460px]"><Image src={socialiseImage} alt="A man scans the QR patch on another guest's jacket at a gallery event" fill sizes="(min-width: 1024px) 45vw, 100vw" className="object-cover" /></div>
+            <div className="p-7 md:p-12">
+              <p className="text-xs font-bold uppercase tracking-[.12em] text-[var(--accent-strong)]">For you</p>
+              <h2 className="mt-3 text-4xl font-extrabold leading-none tracking-[-.06em] md:text-5xl">Then it is yours to keep.</h2>
+              <p className="mt-4 max-w-md text-[var(--muted)]">Your own permanent code opens whatever you choose today: a profile, a question, your portfolio. Print it once and change what sits behind it whenever your plans change.</p>
+              <div className="mt-6 grid gap-4">
+                {keepsake.map((item) => (
+                  <div key={item.title} className="flex gap-4"><span className="grid h-11 w-11 shrink-0 place-items-center rounded-[12px] bg-[var(--accent)] text-[var(--on-accent)]"><item.icon size={22} weight="bold" /></span><div><h3 className="font-extrabold tracking-[-.02em]">{item.title}</h3><p className="mt-0.5 text-sm leading-6 text-[var(--muted)]">{item.body}</p></div></div>
+                ))}
+              </div>
+              <Link className="action-primary mt-8" href="/signup">Create your code <ArrowRight size={18} weight="bold" /></Link>
+            </div>
           </div>
         </section>
       </main>

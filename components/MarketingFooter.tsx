@@ -3,20 +3,21 @@ import { Brand } from '@/components/Brand'
 
 export function MarketingFooter() {
   return (
-    <footer className="mt-20 bg-[#12372a] text-[#eff8f3]">
+    <footer className="mt-20 bg-[var(--side)] text-[#eff8f3]">
       <div className="site-shell grid gap-10 py-12 md:grid-cols-[1.4fr_.8fr_.8fr]">
         <div>
           <Brand inverse />
           <p className="mt-4 max-w-sm text-sm leading-6 text-[#bdd2c6]">
-            A permanent QR for the profile, question, or introduction you need right now.
+            Numbered tags for your event, and a permanent QR for you to keep.
           </p>
         </div>
         <div>
           <h2 className="mb-3 text-sm font-bold">Explore</h2>
           <div className="grid gap-2 text-sm text-[#bdd2c6]">
+            <Link href="/#events">Run an event</Link>
+            <Link href="/#keepsake">Your own code</Link>
             <Link href="/how-it-works">How it works</Link>
             <Link href="/plans">Plans</Link>
-            <Link href="/signup">Create your code</Link>
           </div>
         </div>
         <div>
