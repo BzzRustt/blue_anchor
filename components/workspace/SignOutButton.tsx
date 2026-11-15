@@ -5,7 +5,8 @@ import { useRouter } from 'next/navigation'
 import { useState } from 'react'
 import { authClient } from '@/lib/auth-client'
 
-export function SignOutButton() {
+/** `onDark` is for the deep-green sidebar, where the default muted text would be unreadable. */
+export function SignOutButton({ onDark = false }: { onDark?: boolean }) {
   const router = useRouter()
   const [pending, setPending] = useState(false)
 
@@ -16,5 +17,6 @@ export function SignOutButton() {
     router.refresh()
   }
 
-  return <button type="button" onClick={signOut} disabled={pending} className="action-quiet w-full justify-start px-3"><SignOut size={19} />{pending ? 'Signing out' : 'Log out'}</button>
+  const tone = onDark ? ' !text-[var(--side-ink)] hover:!bg-[var(--side-hover)] hover:!text-white focus-visible:[outline-color:var(--lime)]' : ''
+  return <button type="button" onClick={signOut} disabled={pending} className={`action-quiet w-full justify-start px-3${tone}`}><SignOut size={19} />{pending ? 'Signing out' : 'Log out'}</button>
 }
