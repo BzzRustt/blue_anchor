@@ -9,8 +9,11 @@ import {
   formatTag,
   generateAccessCode,
   nextNumber,
+  fromLocalInput,
+  parseImport,
   parseRoles,
   parseRoster,
+  toLocalInput,
 } from './events.ts'
 
 test('tags are letter plus three digits, or plain digits without roles', () => {
@@ -106,4 +109,22 @@ test('badge CSV quotes commas and quotes, and neutralises spreadsheet formulas',
   assert.ok(lines[2].includes(`"'=HYPERLINK(""http://evil"")"`), 'formula is prefixed and quoted')
   assert.ok(lines[3].includes(`'+44 attacker`) && lines[3].includes(`'@sum`))
   assert.ok(csv.endsWith('\r\n'))
+})
+
+test('parseImport maps header columns, handles quotes and skips repeats', () => {
+  const r = parseImport('First Name,Last Name,Email,Order ID\n"Ada","Obi",ada@x.test,A1\nTunde,Bello,tunde@x.test,A2\nAda,Obi,ADA@x.test,A3\n', [])
+  assert.equal(r.errors.length, 0)
+  assert.deepEqual(r.rows.map((x) => [x.name, x.email, x.ref]), [['Ada Obi', 'ada@x.test', 'A1'], ['Tunde Bello', 'tunde@x.test', 'A2']])
+  assert.equal(r.skipped, 1)
+})
+test('parseImport without a header is name, email, letter; bad rows are errors', () => {
+  const r = parseImport('Ada Obi,ada@x.test,F\nX,nope,Q', ['F'])
+  assert.equal(r.rows.length, 1)
+  assert.equal(r.errors.length, 1)
+})
+test('local time round trips through an IANA zone, including across DST', () => {
+  for (const [local, tz] of [['2026-07-01T18:30', 'Europe/London'], ['2026-01-15T09:00', 'America/New_York'], ['2026-03-29T12:00', 'Europe/London']] as const) {
+    assert.equal(toLocalInput(fromLocalInput(local, tz), tz), local)
+  }
+  assert.equal(fromLocalInput('2026-07-01T18:30', 'Europe/London').toISOString(), '2026-07-01T17:30:00.000Z')
 })

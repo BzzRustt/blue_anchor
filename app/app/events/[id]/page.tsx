@@ -1,12 +1,12 @@
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import { ArrowSquareOut, DownloadSimple, Printer } from '@phosphor-icons/react/dist/ssr'
-import { addSpareTags, cancelEvent, importRoster, startPublish } from '@/app/app/events/actions'
+import { addGroup, addPerson, addSpareTags, cancelEvent, importRoster, startPublish, toggleCheckIn, updateEventSettings } from '@/app/app/events/actions'
 import { CopyLinkButton } from '@/components/workspace/CopyLinkButton'
 import { PageIntro } from '@/components/workspace/PageIntro'
 import { appBaseUrl, getOwnedEvent } from '@/lib/event-queries'
 import { EVENT_PACKAGES, formatPence } from '@/lib/event-packages'
-import { formatWhen } from '@/lib/events'
+import { formatWhen, toLocalInput } from '@/lib/events'
 import { stripeConfigured } from '@/lib/stripe'
 import { planLimits, type Plan } from '@/lib/plans'
 import { requireOwner } from '@/lib/owner'
@@ -17,9 +17,10 @@ const errors: Record<string, string> = {
   not_found: 'That event could not be found.',
   payments_off: 'Payments are not switched on yet, so this event cannot be published. Nothing has been charged.',
   cancelled: 'Payment was cancelled. Nothing has been charged.',
+  dates: 'The event must end after it starts, and networking cannot open after it ends.',
 }
 
-export default async function EventPage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ error?: string; detail?: string; added?: string; paid?: string }> }) {
+export default async function EventPage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ error?: string; detail?: string; added?: string; skipped?: string; paid?: string; saved?: string }> }) {
   const session = await requireOwner()
   const { id } = await params
   const query = await searchParams
@@ -36,6 +37,11 @@ export default async function EventPage({ params, searchParams }: { params: Prom
   const failure = query.error && (query.detail || errors[query.error])
   const limit = query.error === 'attendee_limit'
   const base = `/app/events/${event.id}`
+  const registered = attendees.length
+  const completed = attendees.filter((a) => a.status === 'complete').length
+  const checkedIn = attendees.filter((a) => a.checkedInAt).length
+  const remaining = Math.max(0, cap - registered)
+  const roleSelect = roles.length > 0 && <label className="field-label">Role<select className="field-input" name="letter" required>{roles.map((role) => <option key={role.letter} value={role.letter}>{role.letter} · {role.label}</option>)}</select></label>
 
   return (
     <div className="grid gap-7">
@@ -53,8 +59,13 @@ export default async function EventPage({ params, searchParams }: { params: Prom
           </form>
         </section>
       )}
-      {query.added && <p role="status" className="rounded-xl border border-[var(--accent)] bg-[var(--accent-soft)] p-3 text-sm font-bold text-[var(--accent-strong)]">Added {Number(query.added) || 0} {Number(query.added) === 1 ? 'tag' : 'tags'}.</p>}
+      {query.added && <p role="status" className="rounded-xl border border-[var(--accent)] bg-[var(--accent-soft)] p-3 text-sm font-bold text-[var(--accent-strong)]">Added {Number(query.added) || 0} {Number(query.added) === 1 ? 'tag' : 'tags'}{Number(query.skipped) > 0 ? `; ${query.skipped} already registered or repeated, skipped` : ''}.</p>}
+      {query.saved && <p role="status" className="rounded-xl border border-[var(--accent)] bg-[var(--accent-soft)] p-3 text-sm font-bold text-[var(--accent-strong)]">Saved. Tags and QR codes are unchanged.</p>}
       {failure && <p role="alert" className="rounded-xl border border-[color-mix(in_srgb,var(--danger)_35%,var(--line))] bg-[color-mix(in_srgb,var(--danger)_8%,var(--surface))] p-3 text-sm text-[var(--danger)]">{failure} {limit && <Link className="font-bold underline" href="/plans">See plans</Link>}</p>}
+
+      <section className="grid grid-cols-2 gap-3 md:grid-cols-4" aria-label="Event numbers">
+        {[['Registered', registered], ['Remaining', remaining], ['Completed', completed], ['Checked in', checkedIn]].map(([label, value]) => <article key={label} className="soft-card p-4"><p className="text-xs font-extrabold uppercase tracking-[.14em] text-[var(--faint)]">{label}</p><p className="mt-1 text-3xl font-extrabold tabular-nums">{value}</p></article>)}
+      </section>
 
       <section className="grid gap-4 md:grid-cols-3">
         <article className="soft-card p-5 md:col-span-2">{!published && <p className="mb-2 text-xs font-bold text-[var(--danger)]">Not public until published.</p>}<p className="text-xs font-extrabold uppercase tracking-[.14em] text-[var(--faint)]">Event page</p><p className="mt-2 break-all text-sm font-bold">{url}</p><div className="mt-4"><CopyLinkButton value={url} /></div></article>
@@ -62,14 +73,31 @@ export default async function EventPage({ params, searchParams }: { params: Prom
       </section>
 
       <section className="grid gap-5 lg:grid-cols-2">
+        <div className="grid content-start gap-5">
+          <form action={addPerson} className="soft-card grid content-start gap-4 p-5 sm:p-7">
+            <input type="hidden" name="eventId" value={event.id} />
+            <h2 className="text-xl font-extrabold tracking-[-.035em]">Add one person</h2>
+            <div className="grid gap-4 sm:grid-cols-2"><label className="field-label">Name<input className="field-input" name="name" required minLength={2} maxLength={80} /></label><label className="field-label">Email <span className="font-normal text-[var(--faint)]">(optional)</span><input className="field-input" type="email" name="email" /></label>{roleSelect}</div>
+            <button className="action-secondary">Add person</button>
+          </form>
+          <form action={addGroup} className="soft-card grid content-start gap-4 p-5 sm:p-7">
+            <input type="hidden" name="eventId" value={event.id} />
+            <h2 className="text-xl font-extrabold tracking-[-.035em]">Add a group</h2>
+            <p className="text-sm leading-6 text-[var(--muted)]">One contact email, several people. Each person gets their own tag and card; the email is not shared between them.</p>
+            <label className="field-label">Contact email<input className="field-input" type="email" name="contactEmail" required /></label>
+            <label className="field-label">One name per line<textarea className="field-textarea" name="names" required rows={4} /></label>
+            {roleSelect}
+            <button className="action-secondary">Add group</button>
+          </form>
+        </div>
         <form action={importRoster} className="soft-card grid content-start gap-4 p-5 sm:p-7">
           <input type="hidden" name="eventId" value={event.id} />
-          <h2 className="text-xl font-extrabold tracking-[-.035em]">Add your attendee list</h2>
-          <label className="field-label">One person per line<textarea className="field-textarea" name="roster" required rows={7} placeholder={roles.length ? 'Ada Obi, ada@example.com, F\nTunde Bello, tunde@example.com, I' : 'Ada Obi, ada@example.com\nTunde Bello'} /></label>
-          <p className="text-xs leading-5 text-[var(--muted)]">Format: name, email{roles.length ? `, role letter (${roles.map((r) => r.letter).join(', ')})` : ''}. Email is optional. Paste straight from a spreadsheet export; all of it is added or none.</p>
-          <button className="action-primary">Allocate tags</button>
+          <h2 className="text-xl font-extrabold tracking-[-.035em]">Import a list</h2>
+          <label className="field-label">CSV file <span className="font-normal text-[var(--faint)]">(or paste below)</span><input className="field-input" type="file" name="file" accept=".csv,text/csv,text/plain" /></label>
+          <label className="field-label">One person per line<textarea className="field-textarea" name="roster" rows={6} placeholder={roles.length ? 'Ada Obi, ada@example.com, F\nTunde Bello, tunde@example.com, I' : 'Ada Obi, ada@example.com\nTunde Bello'} /></label>
+          <p className="text-xs leading-5 text-[var(--muted)]">A header row is recognised: name (or first and last name), email{roles.length ? ', role' : ''}, reference. Without one the order is name, email{roles.length ? `, role letter (${roles.map((r) => r.letter).join(', ')})` : ''}. Repeated emails or references are skipped and counted, never merged. If any row is wrong, nothing is imported.</p>
+          <button className="action-primary">Import</button>
         </form>
-
         <form action={addSpareTags} className="soft-card grid content-start gap-4 p-5 sm:p-7">
           <input type="hidden" name="eventId" value={event.id} />
           <h2 className="text-xl font-extrabold tracking-[-.035em]">Spare tags for the day</h2>
@@ -79,11 +107,28 @@ export default async function EventPage({ params, searchParams }: { params: Prom
         </form>
       </section>
 
+      {event.status !== 'cancelled' && (
+        <form action={updateEventSettings} className="soft-card grid gap-4 p-5 sm:grid-cols-2 sm:p-7">
+          <input type="hidden" name="eventId" value={event.id} />
+          <h2 className="text-xl font-extrabold tracking-[-.035em] sm:col-span-2">Details and networking</h2>
+          <label className="field-label sm:col-span-2">Event name<input className="field-input" name="name" required minLength={2} maxLength={80} defaultValue={event.name} /></label>
+          <label className="field-label sm:col-span-2">Venue<input className="field-input" name="venue" maxLength={120} defaultValue={event.venue ?? ''} /></label>
+          <label className="field-label sm:col-span-2">Description<textarea className="field-textarea" name="description" maxLength={500} rows={2} defaultValue={event.description ?? ''} /></label>
+          <label className="field-label">Starts ({event.timezone})<input className="field-input" type="datetime-local" name="startsAt" required defaultValue={toLocalInput(event.startsAt, event.timezone)} /></label>
+          <label className="field-label">Ends<input className="field-input" type="datetime-local" name="endsAt" required defaultValue={toLocalInput(event.endsAt, event.timezone)} /></label>
+          <label className="field-label">How attendees find each other<select className="field-input" name="discovery" defaultValue={event.discovery}><option value="badge">Badge search (default)</option><option value="directory">Full directory</option><option value="off">Off</option></select></label>
+          <label className="field-label">Networking opens <span className="font-normal text-[var(--faint)]">(blank = at the start)</span><input className="field-input" type="datetime-local" name="networkingOpensAt" defaultValue={event.networkingOpensAt ? toLocalInput(event.networkingOpensAt, event.timezone) : ''} /></label>
+          <label className="flex items-center gap-2 text-sm font-bold sm:col-span-2"><input type="checkbox" name="messagingEnabled" defaultChecked={event.messagingEnabled} />Allow attendee messages <span className="font-normal text-[var(--muted)]">(takes effect when messaging is released)</span></label>
+          <p className="text-xs leading-5 text-[var(--muted)] sm:col-span-2">Changing the time keeps every tag and QR code as printed.</p>
+          <button className="action-primary sm:col-span-2">Save changes</button>
+        </form>
+      )}
+
       <section className="soft-card overflow-hidden">
         <div className="flex items-center justify-between border-b border-[var(--line)] p-5"><h2 className="font-extrabold">Tags issued</h2><span className="status-draft" aria-label={`${attendees.length} of ${cap} tags used`}>{attendees.length} / {cap}</span></div>
         {attendees.length === 0
           ? <p className="p-8 text-center text-sm text-[var(--muted)]">No tags yet. Add your attendee list or generate spare tags above.</p>
-          : <div className="overflow-x-auto"><table className="w-full min-w-[520px] text-left text-sm"><thead className="text-xs uppercase tracking-[.1em] text-[var(--faint)]"><tr><th className="px-5 py-3">Tag</th><th className="px-5 py-3">Name</th><th className="px-5 py-3">Role</th><th className="px-5 py-3">Status</th></tr></thead><tbody>{attendees.map((a) => <tr key={a.id} className="border-t border-[var(--line)]"><td className="px-5 py-3 font-mono font-extrabold">{a.tag}</td><td className="px-5 py-3">{a.displayName}</td><td className="px-5 py-3 text-[var(--muted)]">{a.roleLetter ? roleLabel.get(a.roleLetter) ?? a.roleLetter : '—'}</td><td className="px-5 py-3 text-[var(--muted)]">{a.status === 'invited' ? (a.source === 'walk_up' ? 'Spare' : 'Not joined yet') : a.status === 'complete' ? 'Card complete' : 'Withdrawn'}</td></tr>)}</tbody></table></div>}
+          : <div className="overflow-x-auto"><table className="w-full min-w-[620px] text-left text-sm"><thead className="text-xs uppercase tracking-[.1em] text-[var(--faint)]"><tr><th className="px-5 py-3">Tag</th><th className="px-5 py-3">Name</th><th className="px-5 py-3">Role</th><th className="px-5 py-3">Status</th><th className="px-5 py-3">Check-in</th></tr></thead><tbody>{attendees.map((a) => <tr key={a.id} className="border-t border-[var(--line)]"><td className="px-5 py-3 font-mono font-extrabold">{a.tag}</td><td className="px-5 py-3">{a.displayName}</td><td className="px-5 py-3 text-[var(--muted)]">{a.roleLetter ? roleLabel.get(a.roleLetter) ?? a.roleLetter : '—'}</td><td className="px-5 py-3 text-[var(--muted)]">{a.status === 'invited' ? (a.source === 'walk_up' ? 'Spare' : 'Not joined yet') : a.status === 'complete' ? 'Card complete' : 'Withdrawn'}</td><td className="px-5 py-3"><form action={toggleCheckIn}><input type="hidden" name="eventId" value={event.id} /><input type="hidden" name="attendeeId" value={a.id} /><button className="text-sm font-bold text-[var(--accent-strong)] underline">{a.checkedInAt ? 'Checked in · undo' : 'Check in'}</button></form></td></tr>)}</tbody></table></div>}
       </section>
       {event.status !== 'cancelled' && <form action={cancelEvent} className="justify-self-start"><input type="hidden" name="eventId" value={event.id} /><button className="text-sm font-bold text-[var(--danger)] underline">Cancel this event</button></form>}
     </div>

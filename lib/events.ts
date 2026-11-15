@@ -154,3 +154,92 @@ export function badgesCsv(rows: BadgeRow[], accessCode: string): string {
   const lines = rows.map((r) => [r.tag, r.name, r.role, accessCode, r.joinUrl].map(csvCell).join(','))
   return [header.join(','), ...lines].join('\r\n') + '\r\n'
 }
+
+/** Splits CSV text into rows of cells. Handles quoted cells, doubled quotes and quoted newlines. */
+export function splitCsv(input: string): string[][] {
+  const rows: string[][] = []
+  let row: string[] = []
+  let cell = ''
+  let quoted = false
+  for (let i = 0; i < input.length; i++) {
+    const ch = input[i]
+    if (quoted) {
+      if (ch === '"' && input[i + 1] === '"') { cell += '"'; i++ }
+      else if (ch === '"') quoted = false
+      else cell += ch
+    } else if (ch === '"') quoted = true
+    else if (ch === ',') { row.push(cell.trim()); cell = '' }
+    else if (ch === '\n' || ch === '\r') {
+      if (ch === '\r' && input[i + 1] === '\n') i++
+      row.push(cell.trim()); cell = ''
+      if (row.some(Boolean)) rows.push(row)
+      row = []
+    } else cell += ch
+  }
+  row.push(cell.trim())
+  if (row.some(Boolean)) rows.push(row)
+  return rows
+}
+
+export interface ImportRow extends RosterRow { ref: string | null }
+export interface ImportResult { rows: ImportRow[]; errors: string[]; skipped: number; mapped: string[] }
+
+const HEADER_WORDS: Record<string, 'name' | 'first' | 'last' | 'email' | 'letter' | 'ref'> = {
+  name: 'name', 'full name': 'name', attendee: 'name', 'first name': 'first', firstname: 'first', first: 'first',
+  'last name': 'last', lastname: 'last', surname: 'last', last: 'last', email: 'email', 'e-mail': 'email',
+  'email address': 'email', role: 'letter', letter: 'letter', 'role letter': 'letter',
+  ref: 'ref', reference: 'ref', 'registration reference': 'ref', 'order id': 'ref', 'ticket id': 'ref',
+}
+
+/**
+ * CSV or pasted roster with an optional header row. With a header, columns are matched by name
+ * (name, first/last name, email, role, reference); without one the order is name, email, letter.
+ * Repeated emails or references within the file are skipped and counted, never merged silently;
+ * a bad row is an error and nothing at all is imported.
+ */
+export function parseImport(input: string, allowedLetters: string[]): ImportResult {
+  const table = splitCsv(input)
+  const errors: string[] = []
+  const rows: ImportRow[] = []
+  let skipped = 0
+  if (!table.length) return { rows, errors, skipped, mapped: [] }
+
+  const guess = table[0].map((cell) => HEADER_WORDS[cell.toLowerCase()])
+  const hasHeader = guess.some(Boolean)
+  const cols: Array<'name' | 'first' | 'last' | 'email' | 'letter' | 'ref' | undefined> = hasHeader ? guess : ['name', 'email', 'letter']
+  const mapped = hasHeader ? [...new Set(cols.filter(Boolean) as string[])] : ['name', 'email', 'letter']
+  const pick = (cells: string[], key: string) => cells[cols.indexOf(key as never)]?.trim() ?? ''
+
+  const seenEmail = new Set<string>()
+  const seenRef = new Set<string>()
+  table.slice(hasHeader ? 1 : 0).forEach((cells, index) => {
+    const at = `Row ${index + (hasHeader ? 2 : 1)}`
+    const name = (pick(cells, 'name') || [pick(cells, 'first'), pick(cells, 'last')].filter(Boolean).join(' ')).trim()
+    if (name.length < 2 || name.length > 80) return void errors.push(`${at}: the name must be 2–80 characters.`)
+    const email = pick(cells, 'email').toLowerCase()
+    if (email && !EMAIL.test(email)) return void errors.push(`${at}: "${email.slice(0, 40)}" is not a valid email.`)
+    const rawLetter = pick(cells, 'letter')
+    const letter = rawLetter ? rawLetter.toUpperCase() : null
+    if (letter && !allowedLetters.includes(letter)) return void errors.push(`${at}: "${rawLetter.slice(0, 10)}" is not one of this event's roles.`)
+    const ref = pick(cells, 'ref').slice(0, 60) || null
+    if ((email && seenEmail.has(email)) || (ref && seenRef.has(ref))) { skipped++; return }
+    if (email) seenEmail.add(email)
+    if (ref) seenRef.add(ref)
+    rows.push({ name, email: email || null, letter, ref })
+  })
+  return { rows, errors, skipped, mapped }
+}
+
+/** The wall-clock `YYYY-MM-DDTHH:mm` of an instant in an IANA zone (for datetime-local inputs). */
+export function toLocalInput(date: Date, timeZone: string): string {
+  const parts = Object.fromEntries(new Intl.DateTimeFormat('en-GB', { timeZone, hourCycle: 'h23', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }).formatToParts(date).map((p) => [p.type, p.value]))
+  return `${parts.year}-${parts.month}-${parts.day}T${parts.hour}:${parts.minute}`
+}
+
+/** Inverse of toLocalInput: the instant at which an IANA zone's wall clock reads `local`. */
+export function fromLocalInput(local: string, timeZone: string): Date {
+  const asUtc = Date.parse(`${local}:00Z`)
+  let guess = asUtc
+  for (let i = 0; i < 2; i++) guess = asUtc - (Date.parse(`${toLocalInput(new Date(guess), timeZone)}:00Z`) - guess)
+  return new Date(guess)
+}

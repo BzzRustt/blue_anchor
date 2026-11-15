@@ -11,8 +11,9 @@ import {
   formatTag,
   generateAccessCode,
   nextNumber,
+  fromLocalInput,
+  parseImport,
   parseRoles,
-  parseRoster,
   type Role,
 } from '@/lib/events'
 import { appBaseUrl } from '@/lib/event-queries'
@@ -148,9 +149,10 @@ const uuid = z.uuid()
 async function allocate(
   userId: string,
   eventId: string,
-  build: (event: { roles: Role[] }) => { rows: Array<{ name: string; email: string | null; letter: string | null }>; error?: string },
-  source: 'import' | 'walk_up'
-): Promise<{ added: number } | { error: string; detail?: string }> {
+  build: (event: { roles: Role[] }) => { rows: Array<{ name: string; email: string | null; letter: string | null; ref?: string | null }>; error?: string; skipped?: number },
+  source: 'import' | 'walk_up',
+  sharedEmail = false
+): Promise<{ added: number; skipped: number } | { error: string; detail?: string }> {
   return withOwnerDb(userId, async (db) => {
     // The userId predicate is belt and braces: RLS already scopes this to the organiser.
     const [event] = await db
@@ -166,7 +168,20 @@ async function allocate(
     if (!built.rows.length) return { error: 'empty' }
 
     const [owner] = await db.select({ plan: schema.users.plan }).from(schema.users).where(eq(schema.users.id, userId)).limit(1)
-    const existing = await db.select({ tag: schema.eventAttendees.tag }).from(schema.eventAttendees).where(eq(schema.eventAttendees.eventId, event.id))
+    const existing = await db.select({ tag: schema.eventAttendees.tag, email: schema.eventAttendees.email, name: schema.eventAttendees.displayName, ref: schema.eventAttendees.externalRef }).from(schema.eventAttendees).where(eq(schema.eventAttendees.eventId, event.id))
+
+    // Exact repeats are skipped and counted, never merged. A shared (group) email is allowed to repeat;
+    // people are then told apart by name.
+    const haveEmail = new Set(existing.map((r) => r.email?.toLowerCase()).filter(Boolean))
+    const haveRef = new Set(existing.map((r) => r.ref).filter(Boolean))
+    const haveName = new Set(existing.map((r) => r.name.toLowerCase()))
+    let skipped = built.skipped ?? 0
+    built.rows = built.rows.filter((row) => {
+      const dup = (!sharedEmail && row.email && haveEmail.has(row.email)) || (row.ref && haveRef.has(row.ref)) || (sharedEmail && haveName.has(row.name.toLowerCase()))
+      if (dup) skipped++
+      return !dup
+    })
+    if (!built.rows.length) return { error: 'empty', detail: skipped ? `Everyone in that list is already registered (${skipped} skipped).` : undefined }
 
     // Gate on the last row we would add: all-or-nothing, so a roster never half-imports.
     const gate = canAddAttendee((owner?.plan ?? 'free') as Plan, existing.length + built.rows.length - 1)
@@ -183,13 +198,14 @@ async function allocate(
         roleLetter: row.letter,
         displayName: row.name,
         email: row.email,
+        externalRef: row.ref ?? null,
         source,
         status: 'invited' as const,
       }
     })
 
     await db.insert(schema.eventAttendees).values(values)
-    return { added: values.length }
+    return { added: values.length, skipped }
   })
 }
 
@@ -199,20 +215,123 @@ export async function importRoster(formData: FormData) {
   if (!uuid.safeParse(eventId).success) redirect('/app/events')
   const here = `/app/events/${eventId}`
 
-  const text = String(formData.get('roster') ?? '').slice(0, 40_000)
+  // A CSV file, if one was chosen, wins over the pasted text.
+  const file = formData.get('file')
+  const text = (file instanceof File && file.size > 0 && file.size < 300_000 ? await file.text() : String(formData.get('roster') ?? '')).slice(0, 300_000)
   const result = await allocate(session.user.id, eventId, ({ roles }) => {
     const letters = roles.map((role) => role.letter)
-    const { rows, errors } = parseRoster(text, letters)
+    const { rows, errors, skipped } = parseImport(text, letters)
     if (errors.length) return { rows: [], error: errors.slice(0, 3).join(' ') }
     // In a role-based event a tag with no letter would sit outside every sequence.
     const bare = rows.findIndex((row) => letters.length && !row.letter)
     if (bare !== -1) return { rows: [], error: `${rows[bare].name} needs a role letter (${letters.join(', ')}).` }
-    return { rows }
+    return { rows, skipped }
   }, 'import')
 
   if ('error' in result) return fail(here, result.error, result.detail)
   revalidatePath(here)
-  redirect(`${here}?added=${result.added}`)
+  redirect(`${here}?added=${result.added}&skipped=${result.skipped}`)
+}
+
+const personSchema = z.object({
+  name: z.string().trim().min(2).max(80),
+  email: z.union([z.literal(''), z.email()]).optional(),
+  letter: z.string().trim().max(1).optional(),
+})
+
+/** One person, with an optional email and role letter. */
+export async function addPerson(formData: FormData) {
+  const session = await requireOwner()
+  const eventId = String(formData.get('eventId') ?? '')
+  if (!uuid.safeParse(eventId).success) redirect('/app/events')
+  const here = `/app/events/${eventId}`
+  const parsed = personSchema.safeParse(Object.fromEntries(formData))
+  if (!parsed.success) return fail(here, 'invalid')
+  const result = await allocate(session.user.id, eventId, ({ roles }) => {
+    const letter = parsed.data.letter ? parsed.data.letter.toUpperCase() : null
+    if (roles.length && !roles.some((role) => role.letter === letter)) return { rows: [], error: `Choose one of this event's roles: ${roles.map((r) => r.letter).join(', ')}.` }
+    return { rows: [{ name: parsed.data.name, email: parsed.data.email ? parsed.data.email.toLowerCase() : null, letter: roles.length ? letter : null }] }
+  }, 'import')
+  if ('error' in result) return fail(here, result.error, result.detail)
+  revalidatePath(here)
+  redirect(`${here}?added=${result.added}&skipped=${result.skipped}`)
+}
+
+const groupSchema = z.object({ contactEmail: z.email(), names: z.string().max(8000), letter: z.string().trim().max(1).optional() })
+
+/** A group booking: several separate people who share one contact email. Each gets their own tag. */
+export async function addGroup(formData: FormData) {
+  const session = await requireOwner()
+  const eventId = String(formData.get('eventId') ?? '')
+  if (!uuid.safeParse(eventId).success) redirect('/app/events')
+  const here = `/app/events/${eventId}`
+  const parsed = groupSchema.safeParse(Object.fromEntries(formData))
+  if (!parsed.success) return fail(here, 'invalid')
+  const result = await allocate(session.user.id, eventId, ({ roles }) => {
+    const letter = parsed.data.letter ? parsed.data.letter.toUpperCase() : null
+    if (roles.length && !roles.some((role) => role.letter === letter)) return { rows: [], error: `Choose one of this event's roles: ${roles.map((r) => r.letter).join(', ')}.` }
+    const names = [...new Set(parsed.data.names.split(/\r?\n/).map((n) => n.trim()).filter(Boolean))]
+    const bad = names.find((n) => n.length < 2 || n.length > 80)
+    if (bad) return { rows: [], error: `"${bad.slice(0, 30)}" is not a valid name (2-80 characters).` }
+    return { rows: names.map((name) => ({ name, email: parsed.data.contactEmail.toLowerCase(), letter: roles.length ? letter : null })) }
+  }, 'import', true)
+  if ('error' in result) return fail(here, result.error, result.detail)
+  revalidatePath(here)
+  redirect(`${here}?added=${result.added}&skipped=${result.skipped}`)
+}
+
+const settingsSchema = z.object({
+  name: z.string().trim().min(2).max(80),
+  venue: z.string().trim().max(120).optional(),
+  description: z.string().trim().max(500).optional(),
+  startsAt: localDateTime,
+  endsAt: localDateTime,
+  discovery: z.enum(['off', 'badge', 'directory']),
+  networkingOpensAt: z.union([z.literal(''), localDateTime]).optional(),
+})
+
+/** Details, reschedule and networking settings. Tags, QR codes and the access code never change. */
+export async function updateEventSettings(formData: FormData) {
+  const session = await requireOwner()
+  const eventId = String(formData.get('eventId') ?? '')
+  if (!uuid.safeParse(eventId).success) redirect('/app/events')
+  const here = `/app/events/${eventId}`
+  const parsed = settingsSchema.safeParse(Object.fromEntries(formData))
+  if (!parsed.success) return fail(here, 'invalid')
+  const messaging = formData.get('messagingEnabled') === 'on'
+
+  const updated = await withOwnerDb(session.user.id, async (db) => {
+    const [event] = await db.select({ timezone: schema.events.timezone, status: schema.events.status }).from(schema.events)
+      .where(and(eq(schema.events.id, eventId), eq(schema.events.userId, session.user.id))).limit(1)
+    if (!event || event.status === 'cancelled') return 'not_found'
+    const startsAt = fromLocalInput(parsed.data.startsAt, event.timezone)
+    const endsAt = fromLocalInput(parsed.data.endsAt, event.timezone)
+    if (endsAt <= startsAt) return 'dates'
+    const opens = parsed.data.networkingOpensAt ? fromLocalInput(parsed.data.networkingOpensAt, event.timezone) : null
+    if (opens && opens > endsAt) return 'dates'
+    await db.update(schema.events).set({
+      name: parsed.data.name, venue: parsed.data.venue || null, description: parsed.data.description || null,
+      startsAt, endsAt, directoryExpiresAt: directoryExpiresAt(endsAt),
+      discovery: parsed.data.discovery, messagingEnabled: messaging, networkingOpensAt: opens, updatedAt: new Date(),
+    }).where(eq(schema.events.id, eventId))
+    return 'ok'
+  })
+  if (updated !== 'ok') return fail(here, updated)
+  revalidatePath(here)
+  redirect(`${here}?saved=1`)
+}
+
+/** Basic check-in: toggles the arrival time for one attendee. */
+export async function toggleCheckIn(formData: FormData) {
+  const session = await requireOwner()
+  const eventId = String(formData.get('eventId') ?? '')
+  const attendeeId = String(formData.get('attendeeId') ?? '')
+  if (!uuid.safeParse(eventId).success || !uuid.safeParse(attendeeId).success) redirect('/app/events')
+  await withOwnerDb(session.user.id, (db) => db.execute(sql`
+    update event_attendees set checked_in_at = case when checked_in_at is null then now() else null end
+    where id = ${attendeeId}::uuid and event_id = ${eventId}::uuid`))
+  revalidatePath(`/app/events/${eventId}`)
+  redirect(`/app/events/${eventId}`)
 }
 
 const spareSchema = z.object({
@@ -268,7 +387,7 @@ export async function startPublish(formData: FormData) {
   if (!purchase) return fail(here, 'not_found')
 
   const checkout = await createCheckoutSession({
-    amountPence: pkg.pricePence, currency: 'gbp', productName: `${purchase.name} – ${pkg.name}`, purchaseId: purchase.id,
+    amountPence: pkg.pricePence, currency: 'gbp', productName: `${purchase.name} â€“ ${pkg.name}`, purchaseId: purchase.id,
     successUrl: `${appBaseUrl()}${here}?paid=1`, cancelUrl: `${appBaseUrl()}${here}?error=cancelled`,
   })
   if (!checkout) return fail(here, 'payments_off')
