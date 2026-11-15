@@ -18,7 +18,7 @@ export default async function WorkspaceLayout({ children }: { children: React.Re
       <aside className="hidden min-h-dvh border-r border-[var(--line)] bg-[var(--surface-strong)] px-4 py-5 lg:sticky lg:top-0 lg:flex lg:h-dvh lg:flex-col">
         <Link href="/"><Brand /></Link>
         <div className="mt-7 flex items-center gap-3 rounded-2xl bg-[var(--surface)] p-3">
-          <span className="relative grid h-11 w-11 shrink-0 place-items-center overflow-hidden rounded-full bg-[var(--accent)] text-sm font-extrabold text-white">{owner?.image ? <Image src={owner.image} alt="" fill sizes="44px" className="object-cover" unoptimized /> : initials}</span>
+          <span className="relative grid h-11 w-11 shrink-0 place-items-center overflow-hidden rounded-full bg-[var(--accent)] text-sm font-extrabold text-[var(--on-accent)]">{owner?.image ? <Image src={owner.image} alt="" fill sizes="44px" className="object-cover" unoptimized /> : initials}</span>
           <div className="min-w-0"><p className="truncate text-sm font-extrabold">{owner?.name ?? session.user.name}</p><span className="plan-badge mt-1 capitalize">{owner?.plan ?? 'free'} plan</span></div>
         </div>
         <div className="mt-6"><WorkspaceNav /></div>

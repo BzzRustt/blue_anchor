@@ -4,38 +4,57 @@
 
 :root {
   color-scheme: light;
-  --page: #edf4f0;
-  --surface: #f8fbf9;
+  /* Paper, forest and lime — from the Mid-Nov prototype. Names are unchanged so components
+     do not churn; --accent stays a green that works as BOTH a fill and a text colour. */
+  --page: #f8f8f1;
+  --surface: #f1f4e8;
   --surface-strong: #ffffff;
-  --surface-muted: #dfeae4;
-  --ink: #102018;
-  --muted: #53655b;
-  --faint: #728078;
-  --line: #c7d7ce;
-  --accent: #07865c;
-  --accent-strong: #006f4a;
-  --accent-soft: #cceadd;
-  --danger: #ad4242;
+  --surface-muted: #e8efdb;
+  --ink: #18211c;
+  --muted: #536057;
+  --faint: #5d6b62;
+  --line: #dce1d5;
+  --accent: #38663b;
+  --accent-strong: #264a2c;
+  --accent-soft: #e5efc8;
+  --on-accent: #ffffff;
+  /* Lime is for primary buttons and highlights on deep green only: never as text on paper. */
+  --lime: #daf174;
+  --lime-hover: #c9e65c;
+  --on-lime: #172716;
+  --deep: #0b2219;
+  --side: #0b2219;
+  --side-hover: #203d30;
+  --side-ink: #c6d5cc;
+  --danger: #932c39;
   --warning: #8d641d;
-  --shadow: 0 22px 60px rgba(31, 66, 48, 0.14);
+  --shadow: 0 22px 50px rgba(32, 58, 34, 0.14);
 }
 
 html[data-theme='dark'] {
   color-scheme: dark;
-  --page: #111713;
-  --surface: #18201b;
-  --surface-strong: #1e2822;
-  --surface-muted: #26322b;
-  --ink: #ecf4ef;
-  --muted: #a9b8af;
-  --faint: #7f9086;
-  --line: #344238;
-  --accent: #43bc8e;
-  --accent-strong: #63d4a8;
-  --accent-soft: #203c30;
-  --danger: #ed8b8b;
+  --page: #0a1810;
+  --surface: #10261a;
+  --surface-strong: #142e21;
+  --surface-muted: #1c3a2b;
+  --ink: #eef3e6;
+  --muted: #b0c2b4;
+  --faint: #92a597;
+  --line: #2b4a3a;
+  --accent: #a8d05f;
+  --accent-strong: #c4e47f;
+  --accent-soft: #233f2a;
+  --on-accent: #0b2219;
+  --lime: #daf174;
+  --lime-hover: #c9e65c;
+  --on-lime: #172716;
+  --deep: #0b2219;
+  --side: #07140d;
+  --side-hover: #14301f;
+  --side-ink: #b9cdc0;
+  --danger: #f19aa4;
   --warning: #dfb56c;
-  --shadow: 0 26px 70px rgba(0, 0, 0, 0.35);
+  --shadow: 0 26px 70px rgba(0, 0, 0, 0.4);
 }
 
 * { box-sizing: border-box; }
@@ -70,7 +89,7 @@ button:not(:disabled) { cursor: pointer; }
   outline-offset: 3px;
 }
 
-::selection { color: #f5fff9; background: var(--accent); }
+::selection { color: var(--on-accent); background: var(--accent); }
 input[type='range'] { accent-color: var(--accent); }
 
 .site-shell {
@@ -81,9 +100,8 @@ input[type='range'] { accent-color: var(--accent); }
 
 .soft-card {
   border: 1px solid var(--line);
-  border-radius: 18px;
+  border-radius: 22px;
   background: var(--surface-strong);
-  box-shadow: 0 12px 34px rgba(34, 67, 50, 0.08);
 }
 
 .action-primary,
@@ -95,9 +113,9 @@ input[type='range'] { accent-color: var(--accent); }
   align-items: center;
   justify-content: center;
   gap: 8px;
-  border-radius: 12px;
+  border-radius: 10px;
   padding: 0 17px;
-  font-weight: 720;
+  font-weight: 700;
   line-height: 1;
   white-space: nowrap;
   transition: transform 180ms cubic-bezier(.16, 1, .3, 1), background-color 180ms ease, border-color 180ms ease;
@@ -109,12 +127,12 @@ input[type='range'] { accent-color: var(--accent); }
 .action-danger:active { transform: translateY(1px) scale(.99); }
 
 .action-primary {
-  border: 1px solid var(--accent);
-  color: #f5fff9;
-  background: var(--accent);
+  border: 1px solid color-mix(in srgb, var(--lime) 62%, var(--deep));
+  color: var(--on-lime);
+  background: var(--lime);
 }
 
-.action-primary:hover { border-color: var(--accent-strong); background: var(--accent-strong); }
+.action-primary:hover { background: var(--lime-hover); }
 
 .action-secondary {
   border: 1px solid var(--line);
@@ -145,8 +163,9 @@ input[type='range'] { accent-color: var(--accent); }
 .field-textarea,
 .field-select {
   width: 100%;
-  border: 1px solid var(--line);
-  border-radius: 11px;
+  /* Form edges must be visible (3:1), so they use a stronger line than decorative card borders. */
+  border: 1px solid color-mix(in srgb, var(--muted) 72%, var(--surface-strong));
+  border-radius: 9px;
   color: var(--ink);
   background: var(--surface-strong);
   transition: border-color 160ms ease, box-shadow 160ms ease;

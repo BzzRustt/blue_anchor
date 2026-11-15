@@ -84,7 +84,7 @@ export default function HomePage() {
                   <div className="mt-2 flex items-center gap-2"><strong className="text-2xl text-[var(--accent-strong)]">8</strong><input aria-label="Sample rating" className="min-w-0 flex-1" type="range" value="8" readOnly min="1" max="10" /></div>
                   <p className="mt-3 text-[11px] font-bold">Do you have a message for me?</p>
                   <div className="mt-2 min-h-[58px] rounded-[10px] border border-[var(--line)] bg-[var(--surface-strong)] p-2 text-[10px] text-[var(--faint)]">Say something real</div>
-                  <button className="mt-3 min-h-9 w-full rounded-[10px] bg-[var(--accent)] text-[10px] font-bold text-white" type="button">Send privately</button>
+                  <button className="mt-3 min-h-9 w-full rounded-[10px] bg-[var(--accent)] text-[10px] font-bold text-[var(--on-accent)]" type="button">Send privately</button>
                 </div>
                 <p className="mt-2 text-center text-[9px] text-[var(--faint)]">Only Allen can read this</p>
               </div>
@@ -120,7 +120,7 @@ export default function HomePage() {
           <div className="mt-10 grid overflow-hidden rounded-[20px] border border-[var(--line)] bg-[var(--surface-strong)] md:grid-cols-2">
             {uses.map((use, index) => (
               <article key={use.title} className={`grid min-h-52 grid-cols-[52px_1fr] gap-5 p-7 md:p-10 ${index === 1 || index === 2 ? 'bg-[var(--accent-soft)]' : ''} ${index < 2 ? 'border-b border-[var(--line)]' : ''} ${index % 2 === 0 ? 'md:border-r md:border-[var(--line)]' : ''}`}>
-                <span className="grid h-[52px] w-[52px] place-items-center rounded-[15px] bg-[var(--accent)] text-white"><use.icon size={26} weight="bold" /></span>
+                <span className="grid h-[52px] w-[52px] place-items-center rounded-[15px] bg-[var(--accent)] text-[var(--on-accent)]"><use.icon size={26} weight="bold" /></span>
                 <div><h3 className="text-2xl font-extrabold tracking-[-.045em]">{use.title}</h3><p className="mt-2 max-w-md text-sm leading-6 text-[var(--muted)]">{use.body}</p></div>
               </article>
             ))}
