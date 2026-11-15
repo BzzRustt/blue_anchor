@@ -27,6 +27,6 @@ export function EventShell({ eyebrow, title, subtitle, children }: { eyebrow?: s
  */
 export function EventClosed() {
   return (
-    <EventShell title="This directory isn’t open" subtitle="The event may have ended, or the link may be wrong. Ask the organiser for the current link." />
+    <EventShell title="This event isn’t open" subtitle="The event may have ended, or the link may be wrong. Ask the organiser for the current link." />
   )
 }

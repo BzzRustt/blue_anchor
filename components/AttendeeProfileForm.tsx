@@ -3,6 +3,7 @@
 import { ArrowRight, CheckCircle, SpinnerGap } from '@phosphor-icons/react'
 import { useActionState } from 'react'
 import { submitProfile, withdrawCard, type JoinState } from '@/app/e/[slug]/actions'
+import { BadgePlate } from '@/components/BadgePlate'
 import type { Role } from '@/lib/events'
 
 interface Props {
@@ -21,11 +22,9 @@ export function AttendeeProfileForm({ slug, eventName, roles, questions, expires
   if (state.status === 'saved') {
     return (
       <div className="grid gap-5">
-        <div className="rounded-[22px] border border-[var(--line)] bg-[var(--surface)] p-6 text-center">
-          <CheckCircle size={40} weight="fill" className="mx-auto text-[var(--accent)]" />
-          <p className="mt-3 text-sm font-bold text-[var(--muted)]">{state.created ? 'You’re in. Your tag is' : 'Card updated. Your tag is'}</p>
-          <p className="mt-1 font-mono text-5xl font-extrabold tracking-tight">{state.tag}</p>
-          <p className="mt-3 text-sm leading-6 text-[var(--muted)]">Write it on your badge or tell people. They can find you with it until {expiresLabel}.</p>
+        <div className="grid gap-3">
+          <p role="status" className="flex items-center gap-2 text-sm font-bold"><CheckCircle size={22} weight="fill" className="text-[var(--accent)]" />{state.created ? 'You are in.' : 'Card updated.'}</p>
+          <BadgePlate tag={state.tag} name={state.name} note={`Write it on your badge. You can edit your card until ${expiresLabel}.`} />
         </div>
         <ExpiryNotice expiresLabel={expiresLabel} />
         <a className="action-secondary w-full justify-center" href={`/e/${slug}/join`}>Edit my details</a>
@@ -59,13 +58,13 @@ export function AttendeeProfileForm({ slug, eventName, roles, questions, expires
           </label>
         ))}
         {state.status === 'error' && <p role="alert" className="rounded-xl border border-[color-mix(in_srgb,var(--danger)_32%,var(--line))] p-3 text-sm text-[var(--danger)]">{state.message}</p>}
-        <button disabled={pending} className="action-primary w-full">{pending ? <SpinnerGap className="animate-spin" size={19} /> : <ArrowRight size={19} weight="bold" />}{pending ? 'Saving' : existing ? 'Save my card' : 'Join the directory'}</button>
+        <button disabled={pending} className="action-primary w-full">{pending ? <SpinnerGap className="animate-spin" size={19} /> : <ArrowRight size={19} weight="bold" />}{pending ? 'Saving' : existing ? 'Save my card' : 'Create my card'}</button>
         <Visibility eventName={eventName} expiresLabel={expiresLabel} />
       </form>
       {existing && !existing.hidden && (
         <form action={withdrawCard} className="text-center">
           <input type="hidden" name="slug" value={slug} />
-          <button className="text-sm font-bold text-[var(--muted)] underline underline-offset-4">Remove my card from the directory</button>
+          <button className="text-sm font-bold text-[var(--muted)] underline underline-offset-4">Remove my card</button>
         </form>
       )}
     </div>
@@ -74,14 +73,14 @@ export function AttendeeProfileForm({ slug, eventName, roles, questions, expires
 
 /** Said before submitting, in plain words: who sees what, and until when. */
 function Visibility({ eventName, expiresLabel }: { eventName: string; expiresLabel: string }) {
-  return <p className="text-[12px] leading-5 text-[var(--faint)]">People at {eventName} who have the event code can see your name, role and answers until {expiresLabel}. Your email is never shown.</p>
+  return <p className="text-[12px] leading-5 text-[var(--faint)]">Your name, role and answers are shared with the organiser of {eventName}. Your email is never shown to other guests, and your card closes after {expiresLabel}.</p>
 }
 
 function ExpiryNotice({ expiresLabel }: { expiresLabel: string }) {
   return (
     <div className="rounded-[22px] border border-[var(--accent)] bg-[var(--accent-soft)] p-5">
-      <p className="font-extrabold">Keep what you collect</p>
-      <p className="mt-1 text-sm leading-6 text-[var(--muted)]">Everything here disappears after {expiresLabel}. Create a free ScanMe account before then to keep your connections, and to get your own permanent code.</p>
+      <p className="font-extrabold">Keep a code of your own</p>
+      <p className="mt-1 text-sm leading-6 text-[var(--muted)]">Your card closes after {expiresLabel}. A free ScanMe account gives you your own permanent code, so you stay easy to find after the event.</p>
       <a href="/signup" className="action-primary mt-4 w-full justify-center">Create a ScanMe account</a>
     </div>
   )

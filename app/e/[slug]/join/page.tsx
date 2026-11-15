@@ -21,7 +21,7 @@ export default async function JoinPage({ params }: { params: Promise<{ slug: str
   }
 
   return (
-    <EventShell eyebrow={ctx.name} title={card ? 'Your card' : 'Join the directory'} subtitle={card ? 'Update what people see about you.' : 'So the people here can find you, and you can find them. It takes about a minute.'}>
+    <EventShell eyebrow={ctx.name} title={card ? 'Your card' : 'Join the event'} subtitle={card ? 'Update your name and your answers.' : 'Add a short card about what you do and what you are looking for. It takes about a minute.'}>
       <AttendeeProfileForm
         slug={slug}
         eventName={ctx.name}
