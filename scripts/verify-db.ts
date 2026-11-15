@@ -57,7 +57,7 @@ const tables = await admin`
   ORDER BY c.relname
 `
 
-check('21 application tables exist', tables.length === 21, `found ${tables.length}`)
+check('22 application tables exist', tables.length === 22, `found ${tables.length}`)
 check(
   'RLS is enabled and forced on every application table',
   tables.every((table) => table.relrowsecurity && table.relforcerowsecurity),
@@ -426,6 +426,26 @@ check(
     (await isRejected(() => register(eventC.eventId, 'Offline Person', 'F')))
 )
 await admin`UPDATE codes SET is_live = true WHERE id = ${eventC.codeId}`
+
+// M4: publishing. A draft is invisible to attendees; only the signed webhook path can publish.
+const asB = (...q: ReturnType<typeof app>[]) => app.transaction([app`SELECT set_config('request.jwt.claims', ${JSON.stringify({ sub: USER_B })}, true)`, ...q])
+await admin`UPDATE events SET status = 'draft' WHERE id = ${eventC.eventId}`
+check('a draft event is invisible to attendees', (await visitor`SELECT 1 FROM join_event_info('verify-event-c')`).length === 0 && (await isRejected(() => register(eventC.eventId, 'Early Bird', 'F'))))
+check('an organiser cannot publish their own event by UPDATE', await isRejected(() => asB(app`UPDATE events SET status = 'published' WHERE id = ${eventC.eventId}`)))
+check('an organiser cannot set capacity by UPDATE', await isRejected(() => asB(app`UPDATE events SET capacity = 1000 WHERE id = ${eventC.eventId}`)))
+check('an organiser cannot insert an already-published event', await isRejected(() => asB(app`INSERT INTO events (user_id, code_id, campaign_id, name, starts_at, ends_at, access_code, directory_expires_at, status) SELECT user_id, code_id, campaign_id, 'X', now(), now(), 'ZZZZ', now(), 'published' FROM events WHERE id = ${eventC.eventId}`)))
+const toAwait = await asB(app`SELECT event_set_status(${eventC.eventId}::uuid, 'awaiting_payment') AS ok`)
+const toPub = await asB(app`SELECT event_set_status(${eventC.eventId}::uuid, 'published') AS ok`)
+check('event_set_status allows draft to awaiting_payment but never to published', toAwait[1][0].ok === true && toPub[1][0].ok === false)
+check('another organiser cannot change an event status', (await app.transaction([app`SELECT set_config('request.jwt.claims', ${JSON.stringify({ sub: USER_A })}, true)`, app`SELECT event_set_status(${eventC.eventId}::uuid, 'cancelled') AS ok`]))[1][0].ok === false)
+await asB(app`INSERT INTO event_purchases (event_id, user_id, package_key, capacity, amount_pence, stripe_session_id) VALUES (${eventC.eventId}, ${USER_B}, 'p50', 2, 2900, 'cs_verify_1')`)
+check('an organiser cannot insert a purchase as already paid', await isRejected(() => asB(app`INSERT INTO event_purchases (event_id, user_id, package_key, capacity, amount_pence, status) VALUES (${eventC.eventId}, ${USER_B}, 'p50', 9999, 0, 'paid')`)))
+check('an organiser cannot self-confirm a purchase', await isRejected(() => asB(app`SELECT confirm_event_purchase('cs_verify_1')`)))
+const confirmed = await visitor`SELECT confirm_event_purchase('cs_verify_1') AS id`
+const again = await visitor`SELECT confirm_event_purchase('cs_verify_1') AS id`
+const [published] = await admin`SELECT status, capacity FROM events WHERE id = ${eventC.eventId}`
+check('the webhook function publishes with the purchased capacity, once', confirmed[0].id === eventC.eventId && again[0].id === null && published.status === 'published' && published.capacity === 2, JSON.stringify(published))
+check('a published event is reachable and reports its capacity', (await visitor`SELECT capacity FROM join_event_info('verify-event-c')`)[0]?.capacity === 2)
 
 const f1 = await register(eventC.eventId, 'Ada Obi', 'F', 50, '{"q":"fintech"}')
 const f2 = await register(eventC.eventId, 'Tunde Bello', 'F')
