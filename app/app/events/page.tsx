@@ -14,7 +14,8 @@ export default async function EventsPage() {
       name: schema.events.name,
       venue: schema.events.venue,
       startsAt: schema.events.startsAt,
-      attendees: sql<number>`(select count(*)::int from event_attendees a where a.event_id = ${schema.events.id})`,
+      // `events.id` literally, not ${schema.events.id}: see the note in app/app/campaigns/page.tsx.
+      attendees: sql<number>`(select count(*)::int from event_attendees a where a.event_id = events.id)`,
     })
     .from(schema.events)
     .where(eq(schema.events.userId, session.user.id))

@@ -11,10 +11,12 @@ import { personalCodeIds } from '@/lib/product'
 export default async function CampaignsPage({ searchParams }: { searchParams: Promise<{ limit?: string }> }) {
   const session = await requireOwner()
   const query = await searchParams
+  // The subqueries write `campaigns.id` literally: in a one-table query Drizzle renders an
+  // interpolated column as a bare "id", which inside a subquery means the subquery's own table.
   const rows = await withOwnerDb(session.user.id, (db) => db.select({
     campaign: schema.campaigns,
-    responses: sql<number>`(select count(*)::int from responses r where r.campaign_id = ${schema.campaigns.id})`,
-    question: sql<string | null>`(select b.config ->> 'prompt' from question_blocks b where b.campaign_id = ${schema.campaigns.id} order by b.position limit 1)`,
+    responses: sql<number>`(select count(*)::int from responses r where r.campaign_id = campaigns.id)`,
+    question: sql<string | null>`(select b.config ->> 'prompt' from question_blocks b where b.campaign_id = campaigns.id order by b.position limit 1)`,
   }).from(schema.campaigns).where(and(eq(schema.campaigns.userId, session.user.id), inArray(schema.campaigns.codeId, personalCodeIds(session.user.id)))).orderBy(desc(schema.campaigns.createdAt)))
   const campaigns = rows.map((row) => ({ ...row.campaign, responses: row.responses, question: row.question }))
   const liveName = campaigns.find((campaign) => campaign.status === 'live')?.name
