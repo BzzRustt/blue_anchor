@@ -4,6 +4,7 @@ import { ArrowRight, CheckCircle, SpinnerGap } from '@phosphor-icons/react'
 import { useActionState } from 'react'
 import { submitProfile, withdrawCard, type JoinState } from '@/app/e/[slug]/actions'
 import { BadgePlate } from '@/components/BadgePlate'
+import { ConfirmForm } from '@/components/ConfirmForm'
 import type { Role } from '@/lib/events'
 
 interface Props {
@@ -62,10 +63,7 @@ export function AttendeeProfileForm({ slug, eventName, roles, questions, expires
         <Visibility eventName={eventName} expiresLabel={expiresLabel} />
       </form>
       {existing && !existing.hidden && (
-        <form action={withdrawCard} className="text-center">
-          <input type="hidden" name="slug" value={slug} />
-          <button className="text-sm font-bold text-[var(--muted)] underline underline-offset-4">Remove my card</button>
-        </form>
+        <div className="text-center"><ConfirmForm action={withdrawCard} tone="danger" title="Remove your card?" message="Your card will be hidden. You can bring it back by saving it again." confirmLabel="Remove card" triggerLabel="Remove my card" triggerClassName="text-sm font-bold text-[var(--muted)] underline underline-offset-4"><input type="hidden" name="slug" value={slug} /></ConfirmForm></div>
       )}
     </div>
   )
