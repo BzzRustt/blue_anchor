@@ -11,7 +11,11 @@ import {
   rememberAttendee,
   verifiedAttendeeId,
 } from '@/lib/event-join'
+import { asVisibility } from '@/lib/attendee-access'
+import { attendeeAccessEmail, emailConfigured, sendEmail } from '@/lib/email'
+import { appBaseUrl } from '@/lib/event-queries'
 import { PLAN_LIMITS, canAddAttendee } from '@/lib/plans'
+import { RateLimiter } from '@/lib/rate-limiter'
 
 export type JoinState =
   | { status: 'idle' }
@@ -63,6 +67,12 @@ export async function submitProfile(_previous: JoinState, formData: FormData): P
   const role = ctx.roles.length ? String(formData.get('role') ?? '') : null
   if (ctx.roles.length && !ctx.roles.some((candidate) => candidate.letter === role)) return fail('Please choose your role.')
 
+  // New registrations need the event access code (printed on the poster / welcome slide).
+  const code = String(formData.get('accessCode') ?? '').slice(0, 20)
+  const codeResult = await visitorDb.execute(sql`select event_access_code_ok(${ctx.eventId}::uuid, ${code}::text) as ok`)
+  const codeRows = (Array.isArray(codeResult) ? codeResult : (codeResult as { rows: unknown[] }).rows) as Array<{ ok: boolean }>
+  if (!codeRows[0]?.ok) return fail('That access code does not match this event. It is on the poster or the welcome slide.')
+
   if (!canAddAttendee(ctx.plan, ctx.attendeeCount, ctx.capacity).ok) {
     return fail('This event has reached its attendee limit. Please speak to the organiser.')
   }
@@ -102,4 +112,60 @@ export async function withdrawCard(formData: FormData) {
       .where(eq(schema.eventAttendees.id, attendeeId)))
   }
   redirect(`/e/${encodeURIComponent(slug)}?left=1`)
+}
+
+/**
+ * ponytail: in-memory per instance, like joinLimiter. Bounds guessing of access codes and
+ * email floods per connection; sendEmail adds a per-recipient cap on top.
+ */
+const recoveryLimiter = new RateLimiter(10, 3_600_000)
+
+export type RecoveryState = { status: 'idle' } | { status: 'done'; message: string }
+
+/**
+ * "Already registered": email + access code. Always answers with the same words, so it cannot
+ * be used to learn whether someone is registered. Links are emailed, never shown here.
+ */
+export async function requestAccess(_previous: RecoveryState, formData: FormData): Promise<RecoveryState> {
+  const same: RecoveryState = { status: 'done', message: 'If that email is registered for this event, we have sent a personal link to it. It can take a few minutes.' }
+  if (!emailConfigured()) return { status: 'done', message: 'Email links are not switched on for this event yet. Please ask the organiser for your personal link.' }
+
+  const slug = String(formData.get('slug') ?? '')
+  const ctx = await getJoinContext(slug)
+  if (!ctx) return same
+  const key = `recover:${await clientKey(ctx.eventId)}`
+  if (recoveryLimiter.isLimited(key)) return { status: 'done', message: 'Too many attempts from this connection. Please wait and try again.' }
+  recoveryLimiter.increment(key)
+
+  const email = String(formData.get('email') ?? '').trim().toLowerCase().slice(0, 200)
+  const code = String(formData.get('accessCode') ?? '').slice(0, 20)
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return same
+
+  const result = await visitorDb.execute(sql`select display_name, token from request_attendee_access(${ctx.eventId}::uuid, ${email}::text, ${code}::text)`)
+  const rows = (Array.isArray(result) ? result : (result as { rows: unknown[] }).rows) as Array<{ display_name: string; token: string }>
+  if (rows.length) {
+    const links = rows.map((row) => ({ name: row.display_name, url: `${appBaseUrl()}/e/${encodeURIComponent(slug)}/access?t=${row.token}` }))
+    await sendEmail({ to: email, ...attendeeAccessEmail(ctx.name, links) }).catch((error) => console.error('[events] access email failed:', error))
+  }
+  return same
+}
+
+/** Who can see my card, whether people may send me requests, and whether to email me. */
+export async function savePreferences(formData: FormData) {
+  const slug = String(formData.get('slug') ?? '')
+  const ctx = await getJoinContext(slug)
+  if (!ctx) redirect(`/e/${encodeURIComponent(slug)}`)
+  const attendeeId = await verifiedAttendeeId(ctx.eventId)
+  if (attendeeId) {
+    await withAttendeeDb(attendeeId, (tx) => tx
+      .update(schema.eventAttendees)
+      .set({
+        profileVisibility: asVisibility(formData.get('visibility')),
+        allowMessages: formData.get('allowMessages') === 'on',
+        notifyEmail: formData.get('notifyEmail') === 'on',
+        updatedAt: new Date(),
+      })
+      .where(eq(schema.eventAttendees.id, attendeeId)))
+  }
+  redirect(`/e/${encodeURIComponent(slug)}?prefs=1`)
 }

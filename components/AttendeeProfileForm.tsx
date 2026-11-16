@@ -40,6 +40,7 @@ export function AttendeeProfileForm({ slug, eventName, roles, questions, expires
         <input type="hidden" name="slug" value={slug} />
         {existing && <p className="text-sm font-bold">Your tag: <span className="font-mono text-lg">{existing.tag}</span></p>}
         <label className="field-label">Your name<input className="field-input" name="name" required minLength={2} maxLength={80} autoComplete="name" defaultValue={existing?.name ?? ''} placeholder="As you’d like it on your card" /></label>
+        {!existing && <label className="field-label">Event access code<input className="field-input font-mono uppercase tracking-[.2em]" name="accessCode" required maxLength={20} autoComplete="off" autoCapitalize="characters" placeholder="On the poster or slide" /></label>}
         {!existing && roles.length > 0 && (
           <fieldset>
             <legend className="text-sm font-extrabold">I’m here as</legend>

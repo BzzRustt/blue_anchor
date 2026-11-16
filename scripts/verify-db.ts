@@ -57,7 +57,7 @@ const tables = await admin`
   ORDER BY c.relname
 `
 
-check('22 application tables exist', tables.length === 22, `found ${tables.length}`)
+check('24 application tables exist', tables.length === 24, `found ${tables.length}`)
 check(
   'RLS is enabled and forced on every application table',
   tables.every((table) => table.relrowsecurity && table.relforcerowsecurity),
@@ -446,6 +446,42 @@ const again = await visitor`SELECT confirm_event_purchase('cs_verify_1') AS id`
 const [published] = await admin`SELECT status, capacity FROM events WHERE id = ${eventC.eventId}`
 check('the webhook function publishes with the purchased capacity, once', confirmed[0].id === eventC.eventId && again[0].id === null && published.status === 'published' && published.capacity === 2, JSON.stringify(published))
 check('a published event is reachable and reports its capacity', (await visitor`SELECT capacity FROM join_event_info('verify-event-c')`)[0]?.capacity === 2)
+
+// M5: attendee access. The badge QR is not a login; access comes from personal links.
+const { createHash } = await import('node:crypto')
+const sha = (t: string) => createHash('sha256').update(t, 'utf8').digest('hex')
+const asA = (...q: ReturnType<typeof app>[]) => app.transaction([app`SELECT set_config('request.jwt.claims', ${JSON.stringify({ sub: USER_A })}, true)`, ...q])
+check('visitors cannot read access tokens', await isRejected(() => visitor`SELECT id FROM attendee_access_tokens`))
+check('the access code check is case-insensitive and never returns the code',
+  (await visitor`SELECT event_access_code_ok(${eventA.eventId}::uuid, 'letmein') AS ok`)[0].ok === true &&
+  (await visitor`SELECT event_access_code_ok(${eventA.eventId}::uuid, 'WRONG') AS ok`)[0].ok === false)
+check('"already registered" with the wrong access code issues nothing',
+  (await visitor`SELECT * FROM request_attendee_access(${eventA.eventId}::uuid, 'ada@example.test', 'WRONG')`).length === 0)
+check('"already registered" with an unknown email issues nothing',
+  (await visitor`SELECT * FROM request_attendee_access(${eventA.eventId}::uuid, 'nobody@example.test', 'LETMEIN')`).length === 0)
+const emailed = await visitor`SELECT display_name, token FROM request_attendee_access(${eventA.eventId}::uuid, 'ADA@example.test', 'letmein')`
+check('"already registered" issues one link per matching attendee', emailed.length === 1 && emailed[0].display_name === 'Ada Founder' && /^[0-9a-f]{64}$/.test(emailed[0].token))
+const redeem = async (slug: string, token: string) => (await visitor`SELECT redeem_attendee_access(${slug}, ${token}) AS id`)[0].id
+check('a personal link redeems to its attendee on its own event', (await redeem('verify-event-a', emailed[0].token)) === attendeeA1.id)
+check('a personal link does not work on another event', (await redeem('verify-event-b', emailed[0].token)) === null)
+check('a made-up token redeems to nothing', (await redeem('verify-event-a', 'f'.repeat(64))) === null)
+const orgToken = 'a'.repeat(64)
+await asA(app`INSERT INTO attendee_access_tokens (attendee_id, event_id, token_hash, created_by, expires_at) VALUES (${attendeeA1.id}, ${eventA.eventId}, ${sha(orgToken)}, 'organiser', now() + interval '1 day')`)
+check('an organiser-issued link redeems', (await redeem('verify-event-a', orgToken)) === attendeeA1.id)
+check('another organiser cannot issue a link for my attendee', await isRejected(() => asB(app`INSERT INTO attendee_access_tokens (attendee_id, event_id, token_hash, created_by, expires_at) VALUES (${attendeeA1.id}, ${eventA.eventId}, ${sha('b'.repeat(64))}, 'organiser', now() + interval '1 day')`)))
+check('an organiser cannot pose as an emailed link', await isRejected(() => asA(app`INSERT INTO attendee_access_tokens (attendee_id, event_id, token_hash, created_by, expires_at) VALUES (${attendeeA1.id}, ${eventA.eventId}, ${sha('c'.repeat(64))}, 'email', now() + interval '1 day')`)))
+check('an organiser cannot rewrite a token hash', await isRejected(() => asA(app`UPDATE attendee_access_tokens SET token_hash = 'x' WHERE attendee_id = ${attendeeA1.id}`)))
+check('another organiser sees none of my tokens', (await asB(app`SELECT id FROM attendee_access_tokens WHERE event_id = ${eventA.eventId}`))[1].length === 0)
+await asA(app`UPDATE attendee_access_tokens SET revoked_at = now() WHERE attendee_id = ${attendeeA1.id} AND revoked_at IS NULL`)
+check('revoked links stop working', (await redeem('verify-event-a', orgToken)) === null && (await redeem('verify-event-a', emailed[0].token)) === null)
+await asA(app`INSERT INTO audit_log (user_id, event_id, action, target_id) VALUES (${USER_A}, ${eventA.eventId}, 'issue_access_link', ${attendeeA1.id})`)
+check('the audit log is private to its organiser', (await asB(app`SELECT id FROM audit_log WHERE event_id = ${eventA.eventId}`))[1].length === 0)
+check('the audit log cannot be edited or deleted', (await isRejected(() => asA(app`DELETE FROM audit_log WHERE user_id = ${USER_A}`))) && (await isRejected(() => asA(app`UPDATE audit_log SET action = 'x' WHERE user_id = ${USER_A}`))))
+const [spare] = await admin`INSERT INTO event_attendees (event_id, tag, display_name, source, status) VALUES (${eventA.eventId}, '099', 'Walk-up', 'walk_up', 'invited') RETURNING id`
+const claim = async (id: string) => (await visitor`SELECT claim_spare_tag(${eventA.eventId}::uuid, ${id}::uuid) AS ok`)[0].ok
+check('a spare walk-up tag is claimed by its first scan only', (await claim(spare.id)) === true && (await claim(spare.id)) === false)
+check('a real attendee badge can never be claimed', (await claim(attendeeA1.id)) === false)
+check('a visitor can read the visibility choice of a public card', (await visitor`SELECT profile_visibility FROM event_attendees WHERE id = ${attendeeA1.id}`)[0]?.profile_visibility === 'full')
 
 const f1 = await register(eventC.eventId, 'Ada Obi', 'F', 50, '{"q":"fintech"}')
 const f2 = await register(eventC.eventId, 'Tunde Bello', 'F')

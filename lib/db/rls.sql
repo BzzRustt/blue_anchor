@@ -353,12 +353,14 @@ GRANT SELECT (id, code_id, campaign_id, name, venue, starts_at, ends_at,
 
 -- The attendee's public card. email, claim_token and claimed_user_id are deliberately
 -- absent: the directory must never be able to read them.
-GRANT SELECT (id, event_id, tag, role_letter, display_name, answers, visibility, status)
+GRANT SELECT (id, event_id, tag, role_letter, display_name, answers, visibility, status,
+              profile_visibility, allow_messages, notify_email)
   ON event_attendees TO visitor_user;
 -- No INSERT grant for visitors: self-registration goes through register_attendee() below,
 -- which enforces the plan cap and allocates the tag atomically. A direct insert could pick
 -- any tag, any status, and skip the cap.
-GRANT UPDATE (display_name, answers, visibility, status, updated_at)
+GRANT UPDATE (display_name, answers, visibility, status, updated_at,
+              profile_visibility, allow_messages, notify_email)
   ON event_attendees TO visitor_user;
 
 GRANT INSERT (event_id, target_attendee_id, viewer_attendee_id, session_token)
@@ -763,4 +765,128 @@ END;
 $$;
 REVOKE ALL ON FUNCTION public.confirm_event_purchase(text) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION public.confirm_event_purchase(text) TO visitor_user;
+
+-- --------------------------------------------------------------------------
+-- M5: attendee access. The badge QR is NOT a login. An attendee's own access comes from
+-- the registration-device cookie, a personal link (organiser-issued or emailed), or the
+-- one-time claim of an unassigned spare walk-up tag. Tokens are stored only as sha256 hex.
+-- --------------------------------------------------------------------------
+ALTER TABLE attendee_access_tokens ENABLE ROW LEVEL SECURITY;
+ALTER TABLE attendee_access_tokens FORCE ROW LEVEL SECURITY;
+ALTER TABLE audit_log ENABLE ROW LEVEL SECURITY;
+ALTER TABLE audit_log FORCE ROW LEVEL SECURITY;
+
+-- Organisers issue and revoke links for their own events only. Nobody can read a token back:
+-- only the hash is stored. visitor_user has no grant at all; redemption is a function.
+GRANT SELECT, INSERT ON attendee_access_tokens TO app_user;
+GRANT UPDATE (revoked_at) ON attendee_access_tokens TO app_user;
+DROP POLICY IF EXISTS attendee_access_tokens_organiser ON attendee_access_tokens;
+CREATE POLICY attendee_access_tokens_organiser ON attendee_access_tokens TO app_user
+  USING (EXISTS (SELECT 1 FROM events e WHERE e.id = attendee_access_tokens.event_id AND e.user_id = auth.user_id()))
+  WITH CHECK (
+    created_by = 'organiser'
+    AND EXISTS (SELECT 1 FROM events e WHERE e.id = attendee_access_tokens.event_id AND e.user_id = auth.user_id())
+    AND EXISTS (SELECT 1 FROM event_attendees a WHERE a.id = attendee_access_tokens.attendee_id AND a.event_id = attendee_access_tokens.event_id)
+  );
+
+-- Append-only for the organiser: they can add and read their own entries, never edit or delete.
+GRANT SELECT, INSERT ON audit_log TO app_user;
+DROP POLICY IF EXISTS audit_log_owner ON audit_log;
+CREATE POLICY audit_log_owner ON audit_log TO app_user
+  USING (user_id = auth.user_id()) WITH CHECK (user_id = auth.user_id());
+
+-- Swaps a personal link for the attendee id it was issued to, if it is for this event's slug,
+-- not revoked, not expired, and the event is open. Returns NULL otherwise, whatever the reason.
+CREATE OR REPLACE FUNCTION public.redeem_attendee_access(p_slug text, p_token text)
+RETURNS uuid
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT t.attendee_id
+  FROM attendee_access_tokens t
+  JOIN events e ON e.id = t.event_id
+  JOIN codes c ON c.id = e.code_id
+  WHERE t.token_hash = encode(sha256(convert_to(coalesce(p_token, ''), 'UTF8')), 'hex')
+    AND c.slug = p_slug
+    AND t.revoked_at IS NULL
+    AND now() < t.expires_at
+    AND public.event_directory_open(e.id)
+  LIMIT 1;
+$$;
+REVOKE ALL ON FUNCTION public.redeem_attendee_access(text, text) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.redeem_attendee_access(text, text) TO visitor_user;
+
+-- "Already registered": email + the event access code. Issues a fresh link for every attendee
+-- at this event registered with that contact email (a group shares one) and returns the
+-- plaintext tokens ONLY so the app can email them; the caller always shows the same message,
+-- so the response never reveals whether an email is registered. Capped at 20 people.
+CREATE OR REPLACE FUNCTION public.request_attendee_access(p_event uuid, p_email text, p_code text)
+RETURNS TABLE (display_name text, token text)
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_expires timestamptz;
+  v_row record;
+  v_token text;
+BEGIN
+  SELECT e.directory_expires_at INTO v_expires
+  FROM events e
+  WHERE e.id = p_event
+    AND upper(e.access_code) = upper(btrim(coalesce(p_code, '')))
+    AND public.event_directory_open(e.id);
+  IF v_expires IS NULL OR coalesce(btrim(p_email), '') = '' THEN RETURN; END IF;
+
+  FOR v_row IN
+    SELECT a.id, a.display_name FROM event_attendees a
+    WHERE a.event_id = p_event AND lower(a.email) = lower(btrim(p_email))
+    ORDER BY a.tag LIMIT 20
+  LOOP
+    v_token := replace(gen_random_uuid()::text, '-', '') || replace(gen_random_uuid()::text, '-', '');
+    INSERT INTO attendee_access_tokens (attendee_id, event_id, token_hash, created_by, expires_at)
+    VALUES (v_row.id, p_event, encode(sha256(convert_to(v_token, 'UTF8')), 'hex'), 'email', v_expires);
+    display_name := v_row.display_name;
+    token := v_token;
+    RETURN NEXT;
+  END LOOP;
+END;
+$$;
+REVOKE ALL ON FUNCTION public.request_attendee_access(uuid, text, text) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.request_attendee_access(uuid, text, text) TO visitor_user;
+
+-- A pre-printed spare walk-up badge belongs to nobody until someone takes it. The first scan
+-- claims it, exactly once; after that the badge QR shows the public card like any other.
+CREATE OR REPLACE FUNCTION public.claim_spare_tag(p_event uuid, p_attendee uuid)
+RETURNS boolean
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+BEGIN
+  UPDATE event_attendees SET access_claimed_at = now(), updated_at = now()
+  WHERE id = p_attendee AND event_id = p_event
+    AND source = 'walk_up' AND status = 'invited' AND access_claimed_at IS NULL
+    AND public.event_directory_open(p_event);
+  RETURN FOUND;
+END;
+$$;
+REVOKE ALL ON FUNCTION public.claim_spare_tag(uuid, uuid) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.claim_spare_tag(uuid, uuid) TO visitor_user;
+
+-- Checks the access code for a new registration without ever returning it.
+CREATE OR REPLACE FUNCTION public.event_access_code_ok(p_event uuid, p_code text)
+RETURNS boolean
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT EXISTS (SELECT 1 FROM events e WHERE e.id = p_event
+                 AND upper(e.access_code) = upper(btrim(coalesce(p_code, ''))));
+$$;
+REVOKE ALL ON FUNCTION public.event_access_code_ok(uuid, text) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.event_access_code_ok(uuid, text) TO visitor_user;
 

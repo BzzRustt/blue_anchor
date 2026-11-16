@@ -571,6 +571,12 @@ export const eventAttendees = pgTable(
     claimToken: text('claim_token'),
     externalRef: text('external_ref'),
     checkedInAt: timestamp('checked_in_at', { withTimezone: true }),
+    /** hidden | name | full: what someone scanning the badge (or, later, searching) sees. */
+    profileVisibility: text('profile_visibility').notNull().default('full'),
+    allowMessages: boolean('allow_messages').notNull().default(true),
+    notifyEmail: boolean('notify_email').notNull().default(false),
+    /** Set when a spare walk-up tag is claimed by its first scan. */
+    accessClaimedAt: timestamp('access_claimed_at', { withTimezone: true }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
@@ -653,3 +659,34 @@ export const reactions = pgTable(
     index('reactions_attendee_idx').on(t.attendeeId),
   ]
 )
+
+/** Personal access links for attendees. Only the sha256 of the token is stored. */
+export const attendeeAccessTokens = pgTable(
+  'attendee_access_tokens',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    attendeeId: uuid('attendee_id').notNull().references(() => eventAttendees.id, { onDelete: 'cascade' }),
+    eventId: uuid('event_id').notNull().references(() => events.id, { onDelete: 'cascade' }),
+    tokenHash: text('token_hash').notNull(),
+    createdBy: text('created_by').notNull(),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    revokedAt: timestamp('revoked_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex('attendee_access_tokens_hash_unique').on(t.tokenHash), index('attendee_access_tokens_attendee_idx').on(t.attendeeId)]
+)
+
+/** Append-only record of sensitive organiser actions (issuing access links, cancellations). */
+export const auditLog = pgTable(
+  'audit_log',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    userId: text('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+    eventId: uuid('event_id').references(() => events.id, { onDelete: 'cascade' }),
+    action: text('action').notNull(),
+    targetId: uuid('target_id'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index('audit_log_event_idx').on(t.eventId, t.createdAt.desc())]
+)
+

@@ -16,6 +16,7 @@ import {
   parseRoles,
   type Role,
 } from '@/lib/events'
+import { newAccessToken } from '@/lib/attendee-access'
 import { appBaseUrl } from '@/lib/event-queries'
 import { findPackage } from '@/lib/event-packages'
 import { requireOwner } from '@/lib/owner'
@@ -402,4 +403,38 @@ export async function cancelEvent(formData: FormData) {
   await withOwnerDb(session.user.id, (db) => db.execute(sql`select event_set_status(${eventId}::uuid, 'cancelled')`))
   revalidatePath('/app/events')
   redirect(`/app/events/${eventId}`)
+}
+
+/**
+ * Organiser-assisted access: a personal link for one attendee, e.g. someone who lost their
+ * phone or has no working email. Issuing revokes that attendee's earlier links and is written
+ * to the audit log. ponytail: the link comes back in the organiser's own URL (query string) so
+ * it can be copied; move to a one-time flash if organiser browser history becomes a concern.
+ */
+export async function issueAccessLink(formData: FormData) {
+  const session = await requireOwner()
+  const eventId = String(formData.get('eventId') ?? '')
+  const attendeeId = String(formData.get('attendeeId') ?? '')
+  if (!uuid.safeParse(eventId).success || !uuid.safeParse(attendeeId).success) redirect('/app/events')
+  const here = `/app/events/${eventId}`
+  const userId = session.user.id
+  const { token, hash } = newAccessToken()
+
+  const issued = await withOwnerDb(userId, async (db) => {
+    const [row] = await db
+      .select({ slug: schema.codes.slug, expires: schema.events.directoryExpiresAt, status: schema.events.status, name: schema.eventAttendees.displayName })
+      .from(schema.eventAttendees)
+      .innerJoin(schema.events, eq(schema.events.id, schema.eventAttendees.eventId))
+      .innerJoin(schema.codes, eq(schema.codes.id, schema.events.codeId))
+      .where(and(eq(schema.eventAttendees.id, attendeeId), eq(schema.events.id, eventId), eq(schema.events.userId, userId)))
+      .limit(1)
+    if (!row || row.status === 'cancelled') return null
+    await db.execute(sql`update attendee_access_tokens set revoked_at = now() where attendee_id = ${attendeeId}::uuid and revoked_at is null`)
+    await db.insert(schema.attendeeAccessTokens).values({ attendeeId, eventId, tokenHash: hash, createdBy: 'organiser', expiresAt: row.expires })
+    await db.insert(schema.auditLog).values({ userId, eventId, action: 'issue_access_link', targetId: attendeeId })
+    return row
+  })
+  if (!issued) return fail(here, 'not_found')
+  const link = `${appBaseUrl()}/e/${encodeURIComponent(issued.slug)}/access?t=${token}`
+  redirect(`${here}?link=${encodeURIComponent(link)}&for=${encodeURIComponent(issued.name.slice(0, 80))}`)
 }

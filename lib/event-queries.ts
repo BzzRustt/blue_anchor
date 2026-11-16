@@ -33,7 +33,7 @@ export async function getOwnedEvent(userId: string, id: string) {
 }
 
 /**
- * The URL printed on a badge's QR. The attendee id is an unguessable capability; the badge
- * route swaps it for a signed cookie and redirects, so the id never stays in the address bar.
+ * The URL printed on a badge's QR. Since M5 it opens that person's public card (not a login);
+ * only an unassigned spare walk-up tag is claimed by its first scan. Unchanged so printed badges work.
  */
 export const joinUrl = (slug: string, attendeeId: string) => `${appBaseUrl()}/e/${slug}/badge?a=${attendeeId}`

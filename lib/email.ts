@@ -127,3 +127,27 @@ The link works once and expires in an hour. If you did not ask for it, ignore th
     ),
   }
 }
+
+/** One email per address. A group booking shares an address, so it lists each person's own link. */
+export function attendeeAccessEmail(eventName: string, links: Array<{ name: string; url: string }>): Omit<Email, 'to'> {
+  const several = links.length > 1
+  return {
+    subject: `Your link for ${eventName}`,
+    text: `Hi,
+
+${several ? 'Here are the personal links for the people registered with this email' : 'Here is your personal link'} for ${eventName}:
+
+${links.map((l) => `${l.name}: ${l.url}`).join('\n')}
+
+Each link opens one person's event card on the device you use it on. Do not forward it: anyone with the link can edit that card until the event closes. If you did not ask for this, ignore this email.
+
+— ScanMe`,
+    html: layout(
+      `Your link for ${eventName}`,
+      `<p style="margin:0 0 14px">${several ? 'Here are the personal links for the people registered with this email.' : 'Use the button below to open your event card on this device.'}</p>
+${several ? `<ul style="margin:0 0 14px;padding-left:20px">${links.map((l) => `<li><a href="${escapeHtml(l.url)}">${escapeHtml(l.name)}</a></li>`).join('')}</ul>` : ''}
+<p style="margin:16px 0 0;color:#666;font-size:14px">Do not forward this email: anyone with the link can edit the card until the event closes. If you did not ask for it, ignore it.</p>`,
+      several ? undefined : { label: 'Open my event card', url: links[0].url }
+    ),
+  }
+}

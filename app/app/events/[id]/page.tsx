@@ -1,7 +1,7 @@
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import { ArrowSquareOut, DownloadSimple, Printer } from '@phosphor-icons/react/dist/ssr'
-import { addGroup, addPerson, addSpareTags, cancelEvent, importRoster, startPublish, toggleCheckIn, updateEventSettings } from '@/app/app/events/actions'
+import { addGroup, addPerson, addSpareTags, cancelEvent, importRoster, issueAccessLink, startPublish, toggleCheckIn, updateEventSettings } from '@/app/app/events/actions'
 import { CopyLinkButton } from '@/components/workspace/CopyLinkButton'
 import { PageIntro } from '@/components/workspace/PageIntro'
 import { appBaseUrl, getOwnedEvent } from '@/lib/event-queries'
@@ -20,7 +20,7 @@ const errors: Record<string, string> = {
   dates: 'The event must end after it starts, and networking cannot open after it ends.',
 }
 
-export default async function EventPage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ error?: string; detail?: string; added?: string; skipped?: string; paid?: string; saved?: string }> }) {
+export default async function EventPage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ error?: string; detail?: string; added?: string; skipped?: string; paid?: string; saved?: string; link?: string; for?: string }> }) {
   const session = await requireOwner()
   const { id } = await params
   const query = await searchParams
@@ -60,6 +60,14 @@ export default async function EventPage({ params, searchParams }: { params: Prom
         </section>
       )}
       {query.added && <p role="status" className="rounded-xl border border-[var(--accent)] bg-[var(--accent-soft)] p-3 text-sm font-bold text-[var(--accent-strong)]">Added {Number(query.added) || 0} {Number(query.added) === 1 ? 'tag' : 'tags'}{Number(query.skipped) > 0 ? `; ${query.skipped} already registered or repeated, skipped` : ''}.</p>}
+      {query.link && query.link.startsWith(appBaseUrl()) && (
+        <section role="status" className="soft-card grid gap-3 border-[var(--accent)] p-5">
+          <p className="text-sm font-extrabold">Personal link for {query.for ?? 'this attendee'}</p>
+          <p className="break-all font-mono text-xs">{query.link}</p>
+          <p className="text-xs leading-5 text-[var(--muted)]">Send it only to that person. It opens their card on the device they use and works until the event closes. Any earlier link for them has stopped working. This was recorded in the event log.</p>
+          <div><CopyLinkButton value={query.link} /></div>
+        </section>
+      )}
       {query.saved && <p role="status" className="rounded-xl border border-[var(--accent)] bg-[var(--accent-soft)] p-3 text-sm font-bold text-[var(--accent-strong)]">Saved. Tags and QR codes are unchanged.</p>}
       {failure && <p role="alert" className="rounded-xl border border-[color-mix(in_srgb,var(--danger)_35%,var(--line))] bg-[color-mix(in_srgb,var(--danger)_8%,var(--surface))] p-3 text-sm text-[var(--danger)]">{failure} {limit && <Link className="font-bold underline" href="/plans">See plans</Link>}</p>}
 
@@ -128,7 +136,7 @@ export default async function EventPage({ params, searchParams }: { params: Prom
         <div className="flex items-center justify-between border-b border-[var(--line)] p-5"><h2 className="font-extrabold">Tags issued</h2><span className="status-draft" aria-label={`${attendees.length} of ${cap} tags used`}>{attendees.length} / {cap}</span></div>
         {attendees.length === 0
           ? <p className="p-8 text-center text-sm text-[var(--muted)]">No tags yet. Add your attendee list or generate spare tags above.</p>
-          : <div className="overflow-x-auto"><table className="w-full min-w-[620px] text-left text-sm"><thead className="text-xs uppercase tracking-[.1em] text-[var(--faint)]"><tr><th className="px-5 py-3">Tag</th><th className="px-5 py-3">Name</th><th className="px-5 py-3">Role</th><th className="px-5 py-3">Status</th><th className="px-5 py-3">Check-in</th></tr></thead><tbody>{attendees.map((a) => <tr key={a.id} className="border-t border-[var(--line)]"><td className="px-5 py-3 font-mono font-extrabold">{a.tag}</td><td className="px-5 py-3">{a.displayName}</td><td className="px-5 py-3 text-[var(--muted)]">{a.roleLetter ? roleLabel.get(a.roleLetter) ?? a.roleLetter : '—'}</td><td className="px-5 py-3 text-[var(--muted)]">{a.status === 'invited' ? (a.source === 'walk_up' ? 'Spare' : 'Not joined yet') : a.status === 'complete' ? 'Card complete' : 'Withdrawn'}</td><td className="px-5 py-3"><form action={toggleCheckIn}><input type="hidden" name="eventId" value={event.id} /><input type="hidden" name="attendeeId" value={a.id} /><button className="text-sm font-bold text-[var(--accent-strong)] underline">{a.checkedInAt ? 'Checked in · undo' : 'Check in'}</button></form></td></tr>)}</tbody></table></div>}
+          : <div className="overflow-x-auto"><table className="w-full min-w-[720px] text-left text-sm"><thead className="text-xs uppercase tracking-[.1em] text-[var(--faint)]"><tr><th className="px-5 py-3">Tag</th><th className="px-5 py-3">Name</th><th className="px-5 py-3">Role</th><th className="px-5 py-3">Status</th><th className="px-5 py-3">Check-in</th><th className="px-5 py-3">Access</th></tr></thead><tbody>{attendees.map((a) => <tr key={a.id} className="border-t border-[var(--line)]"><td className="px-5 py-3 font-mono font-extrabold">{a.tag}</td><td className="px-5 py-3">{a.displayName}</td><td className="px-5 py-3 text-[var(--muted)]">{a.roleLetter ? roleLabel.get(a.roleLetter) ?? a.roleLetter : '—'}</td><td className="px-5 py-3 text-[var(--muted)]">{a.status === 'invited' ? (a.source === 'walk_up' ? 'Spare' : 'Not joined yet') : a.status === 'complete' ? 'Card complete' : 'Withdrawn'}</td><td className="px-5 py-3"><form action={toggleCheckIn}><input type="hidden" name="eventId" value={event.id} /><input type="hidden" name="attendeeId" value={a.id} /><button className="text-sm font-bold text-[var(--accent-strong)] underline">{a.checkedInAt ? 'Checked in · undo' : 'Check in'}</button></form></td><td className="px-5 py-3"><form action={issueAccessLink}><input type="hidden" name="eventId" value={event.id} /><input type="hidden" name="attendeeId" value={a.id} /><button className="text-sm font-bold text-[var(--accent-strong)] underline">Personal link</button></form></td></tr>)}</tbody></table></div>}
       </section>
       {event.status !== 'cancelled' && <form action={cancelEvent} className="justify-self-start"><input type="hidden" name="eventId" value={event.id} /><button className="text-sm font-bold text-[var(--danger)] underline">Cancel this event</button></form>}
     </div>
