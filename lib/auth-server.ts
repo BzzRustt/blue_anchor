@@ -1,13 +1,21 @@
 import { betterAuth } from 'better-auth/minimal'
 import { drizzleAdapter } from 'better-auth/adapters/drizzle'
 import { authDb, schema } from '@/lib/db'
-import { resetPasswordEmail, sendEmail } from '@/lib/email'
+import { emailOTP } from 'better-auth/plugins'
+import { emailConfigured, resetPasswordEmail, signInCodeEmail, sendEmail } from '@/lib/email'
 
 const secret = process.env.BETTER_AUTH_SECRET ?? process.env.SESSION_SECRET
 
 if (!secret || secret.length < 32) {
   throw new Error('BETTER_AUTH_SECRET or SESSION_SECRET must be at least 32 characters.')
 }
+
+const google = process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET
+  ? { clientId: process.env.GOOGLE_CLIENT_ID, clientSecret: process.env.GOOGLE_CLIENT_SECRET }
+  : null
+
+/** Which sign-in methods are switched on. Passwords always; the others once their settings exist. */
+export const signInMethods = () => ({ emailCode: emailConfigured(), google: !!google })
 
 export const auth = betterAuth({
   appName: 'ScanMe',
@@ -60,6 +68,25 @@ export const auth = betterAuth({
       }
     },
   },
+  // Google verifies the email address, so a Google sign-in joins the existing account with that email.
+  socialProviders: google ? { google } : {},
+  account: { accountLinking: { enabled: true, trustedProviders: ['google'] } },
+  plugins: [
+    emailOTP({
+      otpLength: 6,
+      expiresIn: 600,
+      allowedAttempts: 5,
+      // Same reasoning as sendResetPassword: never let delivery errors reveal whether an account exists.
+      async sendVerificationOTP({ email, otp, type }) {
+        if (type !== 'sign-in' || !emailConfigured()) return
+        try {
+          await sendEmail({ to: email, ...signInCodeEmail(otp) })
+        } catch (error) {
+          console.error('[auth] sign-in code email failed:', error)
+        }
+      },
+    }),
+  ],
   session: {
     expiresIn: 60 * 60 * 24 * 14,
     updateAge: 60 * 60 * 24,

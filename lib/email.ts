@@ -165,3 +165,17 @@ export function messageRequestEmail(eventName: string, url: string): Omit<Email,
     ),
   }
 }
+
+/** A six-digit sign-in code. Valid for 10 minutes, five tries. */
+export function signInCodeEmail(code: string): Omit<Email, 'to'> {
+  return {
+    subject: `Your ScanMe sign-in code: ${code}`,
+    text: `Your ScanMe sign-in code is ${code}\n\nIt works for 10 minutes. If you did not ask for it, ignore this email; nobody can sign in without the code.\n\n— ScanMe`,
+    html: layout(
+      'Your sign-in code',
+      `<p style="margin:0 0 14px">Enter this code to sign in to ScanMe:</p>
+<p style="margin:0 0 14px;font-size:32px;font-weight:800;letter-spacing:.2em">${escapeHtml(code)}</p>
+<p style="margin:16px 0 0;color:#666;font-size:14px">It works for 10 minutes. If you did not ask for it, ignore this email.</p>`
+    ),
+  }
+}
