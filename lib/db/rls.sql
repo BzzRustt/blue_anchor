@@ -780,9 +780,18 @@ ALTER TABLE audit_log FORCE ROW LEVEL SECURITY;
 -- only the hash is stored. visitor_user has no grant at all; redemption is a function.
 GRANT SELECT, INSERT ON attendee_access_tokens TO app_user;
 GRANT UPDATE (revoked_at) ON attendee_access_tokens TO app_user;
+-- Read and revoke (UPDATE is column-granted to revoked_at only) any link on my events,
+-- including emailed ones; insert only organiser links for my own attendees.
 DROP POLICY IF EXISTS attendee_access_tokens_organiser ON attendee_access_tokens;
-CREATE POLICY attendee_access_tokens_organiser ON attendee_access_tokens TO app_user
+DROP POLICY IF EXISTS attendee_access_tokens_organiser_read ON attendee_access_tokens;
+DROP POLICY IF EXISTS attendee_access_tokens_organiser_revoke ON attendee_access_tokens;
+DROP POLICY IF EXISTS attendee_access_tokens_organiser_insert ON attendee_access_tokens;
+CREATE POLICY attendee_access_tokens_organiser_read ON attendee_access_tokens FOR SELECT TO app_user
+  USING (EXISTS (SELECT 1 FROM events e WHERE e.id = attendee_access_tokens.event_id AND e.user_id = auth.user_id()));
+CREATE POLICY attendee_access_tokens_organiser_revoke ON attendee_access_tokens FOR UPDATE TO app_user
   USING (EXISTS (SELECT 1 FROM events e WHERE e.id = attendee_access_tokens.event_id AND e.user_id = auth.user_id()))
+  WITH CHECK (EXISTS (SELECT 1 FROM events e WHERE e.id = attendee_access_tokens.event_id AND e.user_id = auth.user_id()));
+CREATE POLICY attendee_access_tokens_organiser_insert ON attendee_access_tokens FOR INSERT TO app_user
   WITH CHECK (
     created_by = 'organiser'
     AND EXISTS (SELECT 1 FROM events e WHERE e.id = attendee_access_tokens.event_id AND e.user_id = auth.user_id())

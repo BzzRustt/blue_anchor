@@ -460,7 +460,7 @@ check('"already registered" with the wrong access code issues nothing',
 check('"already registered" with an unknown email issues nothing',
   (await visitor`SELECT * FROM request_attendee_access(${eventA.eventId}::uuid, 'nobody@example.test', 'LETMEIN')`).length === 0)
 const emailed = await visitor`SELECT display_name, token FROM request_attendee_access(${eventA.eventId}::uuid, 'ADA@example.test', 'letmein')`
-check('"already registered" issues one link per matching attendee', emailed.length === 1 && emailed[0].display_name === 'Ada Founder' && /^[0-9a-f]{64}$/.test(emailed[0].token))
+check('"already registered" issues one link per matching attendee', emailed.length === 1 && emailed[0].display_name === 'Ada Updated' &&/^[0-9a-f]{64}$/.test(emailed[0].token))
 const redeem = async (slug: string, token: string) => (await visitor`SELECT redeem_attendee_access(${slug}, ${token}) AS id`)[0].id
 check('a personal link redeems to its attendee on its own event', (await redeem('verify-event-a', emailed[0].token)) === attendeeA1.id)
 check('a personal link does not work on another event', (await redeem('verify-event-b', emailed[0].token)) === null)
