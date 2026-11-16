@@ -1072,6 +1072,16 @@ CREATE POLICY event_messages_participants ON event_messages FOR SELECT TO visito
                  AND public.current_attendee_id() IN (r.from_attendee_id, r.to_attendee_id)
                  AND public.event_directory_open(r.event_id)));
 
+-- Blocks and reports are written only through the functions below. An attendee can read
+-- the blocks and reports they made themselves, nothing else; organisers have no grant.
+GRANT SELECT ON attendee_blocks, abuse_reports TO visitor_user;
+DROP POLICY IF EXISTS attendee_blocks_own ON attendee_blocks;
+CREATE POLICY attendee_blocks_own ON attendee_blocks FOR SELECT TO visitor_user
+  USING (blocker_attendee_id = public.current_attendee_id());
+DROP POLICY IF EXISTS abuse_reports_own ON abuse_reports;
+CREATE POLICY abuse_reports_own ON abuse_reports FOR SELECT TO visitor_user
+  USING (reporter_attendee_id = public.current_attendee_id());
+
 -- A message request: one short introduction. Only while the event is live, only if the
 -- organiser turned messaging on and the person accepts requests. Returns the recipient's
 -- email ONLY when they asked to be emailed, so the app can send a notice without content.
