@@ -1,7 +1,7 @@
 import Link from 'next/link'
 import { and, eq } from 'drizzle-orm'
 import { ArrowSquareOut, Check, Eye } from '@phosphor-icons/react/dist/ssr'
-import { saveProfile } from '@/app/app/actions'
+import { deleteAccount, saveProfile } from '@/app/app/actions'
 import { SignOutButton } from '@/components/workspace/SignOutButton'
 import { PageIntro } from '@/components/workspace/PageIntro'
 import { schema, withOwnerDb } from '@/lib/db'
@@ -33,7 +33,7 @@ export default async function ProfilePage({ searchParams }: { searchParams: Prom
     <div className="grid gap-7">
       <PageIntro eyebrow="Account" title="Profile" body="Fill it out once. Each Mode shows only the details you choose." />
       {query.saved && <p role="status" className="flex items-center gap-2 rounded-xl border border-[var(--accent)] bg-[var(--accent-soft)] p-3 text-sm font-bold"><Check size={18} weight="bold" />Profile saved.</p>}
-      {query.error && <p role="alert" className="rounded-xl border border-[color-mix(in_srgb,var(--danger)_32%,var(--line))] p-3 text-sm text-[var(--danger)]">{query.error === 'handle' ? 'That handle is already taken. Try another.' : 'Please check your details and try again.'}</p>}
+      {query.error && <p role="alert" className="rounded-xl border border-[color-mix(in_srgb,var(--danger)_32%,var(--line))] p-3 text-sm text-[var(--danger)]">{query.error === 'handle' ? 'That handle is already taken. Try another.' : query.error === 'confirm' ? 'To delete your account, type DELETE in the box.' : query.error === 'reauth' ? 'For your safety, sign out and sign in again, then delete your account within a day.' : 'Please check your details and try again.'}</p>}
 
       <div className="grid gap-5 xl:grid-cols-[1fr_320px]">
         <form action={saveProfile} className="soft-card grid gap-8 p-5 sm:p-7">
@@ -71,6 +71,18 @@ export default async function ProfilePage({ searchParams }: { searchParams: Prom
           </div>
           <div className="soft-card p-5"><h2 className="font-extrabold">Your plan</h2><p className="mt-2 text-3xl font-extrabold">{owner.plan === 'free' ? 'Free' : 'Pro'}</p><p className="mt-2 text-sm leading-6 text-[var(--muted)]">{owner.plan === 'free' ? 'Basic, Networking and Incognito Modes. Pro adds Creator and Portfolio.' : 'Every Mode, including Creator and Portfolio.'}</p><Link href="/plans" className="action-secondary mt-5 w-full">Compare plans <ArrowSquareOut size={17} /></Link></div>
           <div className="soft-card p-5"><h2 className="font-extrabold">Account</h2><p className="mt-2 break-all text-sm text-[var(--muted)]">{owner.email}</p><div className="mt-4"><SignOutButton /></div></div>
+          <div className="soft-card grid gap-3 p-5">
+            <h2 className="font-extrabold">Your data</h2>
+            <a href="/app/export" className="action-secondary w-full justify-center">Download my data</a>
+            <details className="text-sm">
+              <summary className="cursor-pointer font-bold text-[var(--danger)]">Delete my account</summary>
+              <form action={deleteAccount} className="mt-3 grid gap-3">
+                <p className="leading-6 text-[var(--muted)]">This permanently deletes your account, your code, Modes, responses, and every event you organise with its attendees. It cannot be undone. Download your data first if you want a copy.</p>
+                <label className="field-label">Type DELETE to confirm<input className="field-input" name="confirm" required autoComplete="off" /></label>
+                <button className="rounded-full bg-[var(--danger)] px-4 py-2.5 font-bold text-white">Delete my account</button>
+              </form>
+            </details>
+          </div>
           {code && <a className="action-secondary" target="_blank" rel="noreferrer" href={`/t/${code.slug}`}>Open visitor page <ArrowSquareOut size={17} /></a>}
         </aside>
       </div>

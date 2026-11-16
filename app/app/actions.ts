@@ -110,3 +110,20 @@ export async function reportResponse(formData: FormData) {
   await withOwnerDb(user.id, (db) => db.update(schema.responses).set({ flagged: true, readAt: new Date() }).where(and(eq(schema.responses.id, responseId), eq(schema.responses.userId, user.id))))
   revalidatePath('/app', 'layout')
 }
+
+/**
+ * Deletes the account and everything it owns (codes, Modes, responses, events and their
+ * attendees) through database cascades. Asks for the word DELETE, and Better Auth refuses
+ * unless the sign-in is recent, so a borrowed open laptop is not enough.
+ */
+export async function deleteAccount(formData: FormData) {
+  await owner()
+  if (String(formData.get('confirm') ?? '').trim().toUpperCase() !== 'DELETE') redirect('/app/profile?error=confirm')
+  try {
+    await auth.api.deleteUser({ headers: await headers(), body: {} })
+  } catch (error) {
+    console.error('[account] delete failed:', error)
+    redirect('/app/profile?error=reauth')
+  }
+  redirect('/?deleted=1')
+}

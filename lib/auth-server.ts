@@ -33,6 +33,8 @@ export const auth = betterAuth({
   }),
   user: {
     modelName: 'users',
+    // Profile > Delete my account. Needs a recent sign-in (Better Auth's fresh-session rule).
+    deleteUser: { enabled: true },
     additionalFields: {
       plan: { type: 'string', required: false, input: false },
       handle: { type: 'string', required: false },
