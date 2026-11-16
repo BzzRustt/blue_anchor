@@ -1,7 +1,8 @@
 import Link from 'next/link'
 import { and, eq } from 'drizzle-orm'
 import { ArrowSquareOut, Check, Eye } from '@phosphor-icons/react/dist/ssr'
-import { deleteAccount, saveProfile } from '@/app/app/actions'
+import { deleteAccount, openBilling, saveProfile, startPro } from '@/app/app/actions'
+import { proConfigured } from '@/lib/stripe'
 import { SignOutButton } from '@/components/workspace/SignOutButton'
 import { PageIntro } from '@/components/workspace/PageIntro'
 import { schema, withOwnerDb } from '@/lib/db'
@@ -13,7 +14,7 @@ function Group({ title, hint, children }: { title: string; hint: string; childre
   return <fieldset className="grid gap-4 border-0 p-0 sm:grid-cols-2"><legend className="sm:col-span-2"><span className="block text-lg font-extrabold tracking-[-.03em]">{title}</span><span className="mt-1 block text-sm font-normal text-[var(--muted)]">{hint}</span></legend>{children}</fieldset>
 }
 
-export default async function ProfilePage({ searchParams }: { searchParams: Promise<{ saved?: string; error?: string }> }) {
+export default async function ProfilePage({ searchParams }: { searchParams: Promise<{ saved?: string; error?: string; pro?: string }> }) {
   const query = await searchParams
   const session = await requireOwner()
   const { owner, code, live } = await withOwnerDb(session.user.id, async (db) => {
@@ -33,7 +34,7 @@ export default async function ProfilePage({ searchParams }: { searchParams: Prom
     <div className="grid gap-7">
       <PageIntro eyebrow="Account" title="Profile" body="Fill it out once. Each Mode shows only the details you choose." />
       {query.saved && <p role="status" className="flex items-center gap-2 rounded-xl border border-[var(--accent)] bg-[var(--accent-soft)] p-3 text-sm font-bold"><Check size={18} weight="bold" />Profile saved.</p>}
-      {query.error && <p role="alert" className="rounded-xl border border-[color-mix(in_srgb,var(--danger)_32%,var(--line))] p-3 text-sm text-[var(--danger)]">{query.error === 'handle' ? 'That handle is already taken. Try another.' : query.error === 'confirm' ? 'To delete your account, type DELETE in the box.' : query.error === 'reauth' ? 'For your safety, sign out and sign in again, then delete your account within a day.' : 'Please check your details and try again.'}</p>}
+      {query.error && <p role="alert" className="rounded-xl border border-[color-mix(in_srgb,var(--danger)_32%,var(--line))] p-3 text-sm text-[var(--danger)]">{query.error === 'handle' ? 'That handle is already taken. Try another.' : query.error === 'confirm' ? 'To delete your account, type DELETE in the box.' : query.error === 'payments' ? 'Payments are not available right now. Please try again later.' : query.error === 'reauth' ? 'For your safety, sign out and sign in again, then delete your account within a day.' : 'Please check your details and try again.'}</p>}
 
       <div className="grid gap-5 xl:grid-cols-[1fr_320px]">
         <form action={saveProfile} className="soft-card grid gap-8 p-5 sm:p-7">
@@ -69,7 +70,7 @@ export default async function ProfilePage({ searchParams }: { searchParams: Prom
             <p className="relative mt-2 text-sm leading-6 text-[var(--on-deep-muted)]">Your {active ? MODE_INFO[active].name : 'active'} Mode decides which details are shared. Editing your profile never reveals a hidden field.</p>
             {active && <Link href={`/app/modes/${active}/preview`} className="action-secondary relative mt-4 w-full !border-white !bg-white !text-[var(--deep)]"><Eye size={18} />See what others see</Link>}
           </div>
-          <div className="soft-card p-5"><h2 className="font-extrabold">Your plan</h2><p className="mt-2 text-3xl font-extrabold">{owner.plan === 'free' ? 'Free' : 'Pro'}</p><p className="mt-2 text-sm leading-6 text-[var(--muted)]">{owner.plan === 'free' ? 'Basic, Networking and Incognito Modes. Pro adds Creator and Portfolio.' : 'Every Mode, including Creator and Portfolio.'}</p><Link href="/plans" className="action-secondary mt-5 w-full">Compare plans <ArrowSquareOut size={17} /></Link></div>
+          <div className="soft-card p-5"><h2 className="font-extrabold">Your plan</h2><p className="mt-2 text-3xl font-extrabold">{owner.plan === 'free' ? 'Free' : 'Pro'}</p><p className="mt-2 text-sm leading-6 text-[var(--muted)]">{owner.plan === 'free' ? 'Basic, Networking and Incognito Modes. Pro adds Creator and Portfolio.' : 'Every Mode, including Creator and Portfolio.'}</p>{query.pro && owner.plan === 'free' && <p className="mt-3 text-sm font-bold text-[var(--accent-strong)]">Thanks. Pro switches on as soon as Stripe confirms the payment; refresh in a moment.</p>}{owner.plan === 'free' && proConfigured() && <form action={startPro} className="mt-5"><button className="action-primary w-full">Upgrade to Pro</button></form>}{owner.plan !== 'free' && owner.stripeCustomerId && <form action={openBilling} className="mt-5"><button className="action-secondary w-full">Manage or cancel Pro</button></form>}<Link href="/plans" className="action-secondary mt-3 w-full">Compare plans <ArrowSquareOut size={17} /></Link></div>
           <div className="soft-card p-5"><h2 className="font-extrabold">Account</h2><p className="mt-2 break-all text-sm text-[var(--muted)]">{owner.email}</p><div className="mt-4"><SignOutButton /></div></div>
           <div className="soft-card grid gap-3 p-5">
             <h2 className="font-extrabold">Your data</h2>

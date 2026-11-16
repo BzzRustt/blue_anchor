@@ -16,6 +16,8 @@ import { attendeeAccessEmail, emailConfigured, sendEmail } from '@/lib/email'
 import { appBaseUrl } from '@/lib/event-queries'
 import { PLAN_LIMITS, canAddAttendee } from '@/lib/plans'
 import { RateLimiter } from '@/lib/rate-limiter'
+import { auth } from '@/lib/auth-server'
+import { headers } from 'next/headers'
 
 export type JoinState =
   | { status: 'idle' }
@@ -168,4 +170,17 @@ export async function savePreferences(formData: FormData) {
       .where(eq(schema.eventAttendees.id, attendeeId)))
   }
   redirect(`/e/${encodeURIComponent(slug)}?prefs=1`)
+}
+
+/** Keep this attendee card on the signed-in ScanMe account (M8). Both identities are verified server-side. */
+export async function linkAccount(formData: FormData) {
+  const slug = String(formData.get('slug') ?? '')
+  const ctx = await getJoinContext(slug)
+  if (!ctx) redirect(`/e/${encodeURIComponent(slug)}`)
+  const [session, attendeeId] = await Promise.all([auth.api.getSession({ headers: await headers() }), verifiedAttendeeId(ctx.eventId)])
+  if (!session) redirect(`/login?next=${encodeURIComponent(`/e/${slug}`)}`)
+  if (attendeeId) {
+    await withAttendeeDb(attendeeId, (tx) => tx.execute(sql`select attendee_link_account(${session.user.id})`))
+  }
+  redirect(`/e/${encodeURIComponent(slug)}?linked=1`)
 }

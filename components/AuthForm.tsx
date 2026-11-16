@@ -9,7 +9,7 @@ import { authClient } from '@/lib/auth-client'
 export interface SignInMethods { emailCode: boolean; google: boolean }
 
 /** Password always; an emailed six-digit code and Google once they are configured (M3, decision D1). */
-export function AuthForm({ mode, methods = { emailCode: false, google: false } }: { mode: 'login' | 'signup'; methods?: SignInMethods }) {
+export function AuthForm({ mode, methods = { emailCode: false, google: false }, next = '/app' }: { mode: 'login' | 'signup'; methods?: SignInMethods; next?: string }) {
   const router = useRouter()
   const [pending, setPending] = useState(false)
   const [error, setError] = useState('')
@@ -27,7 +27,7 @@ export function AuthForm({ mode, methods = { emailCode: false, google: false } }
     }
     onOk()
   }
-  const done = () => { router.push('/app'); router.refresh() }
+  const done = () => { router.push(next); router.refresh() }
 
   function submitPassword(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -58,7 +58,7 @@ export function AuthForm({ mode, methods = { emailCode: false, google: false } }
     <div className="grid gap-3">
       <p className="text-center text-xs font-bold uppercase tracking-[.14em] text-[var(--faint)]">or</p>
       {methods.google && (
-        <button type="button" className="action-secondary justify-center" disabled={pending} onClick={() => void run(() => authClient.signIn.social({ provider: 'google', callbackURL: '/app' }), () => {})}>
+        <button type="button" className="action-secondary justify-center" disabled={pending} onClick={() => void run(() => authClient.signIn.social({ provider: 'google', callbackURL: next }), () => {})}>
           <GoogleLogo size={18} weight="bold" />Continue with Google
         </button>
       )}

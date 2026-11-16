@@ -1,24 +1,26 @@
 import type { Metadata } from 'next'
 import Link from 'next/link'
 import { ArrowRight } from '@phosphor-icons/react/dist/ssr'
-import { eq } from 'drizzle-orm'
-import { savePreferences } from '@/app/e/[slug]/actions'
+import { eq, sql } from 'drizzle-orm'
+import { headers } from 'next/headers'
+import { linkAccount, savePreferences } from '@/app/e/[slug]/actions'
 import { AttendeeNav } from '@/components/AttendeeNav'
 import { AttendeeRecoveryForm } from '@/components/AttendeeRecoveryForm'
 import { BadgePlate } from '@/components/BadgePlate'
 import { EventClosed, EventShell } from '@/components/EventShell'
 import { asVisibility } from '@/lib/attendee-access'
-import { schema, withAttendeeDb } from '@/lib/db'
+import { auth } from '@/lib/auth-server'
+import { schema, withAttendeeDb, withOwnerDb } from '@/lib/db'
 import { getJoinContext, loadMyCard, verifiedAttendeeId } from '@/lib/event-join'
 import { formatWhen } from '@/lib/events'
-import { unreadCount } from '@/lib/networking'
+import { rowsOf, unreadCount } from '@/lib/networking'
 
 export const metadata: Metadata = { title: 'Event', robots: { index: false, follow: false } }
 
 const notice = 'rounded-xl border p-3 text-sm'
 
 /** The permanent event link: what goes on the poster and the welcome slide. */
-export default async function EventPage({ params, searchParams }: { params: Promise<{ slug: string }>; searchParams: Promise<{ left?: string; access?: string; prefs?: string }> }) {
+export default async function EventPage({ params, searchParams }: { params: Promise<{ slug: string }>; searchParams: Promise<{ left?: string; access?: string; prefs?: string; linked?: string }> }) {
   const { slug } = await params
   const query = await searchParams
   const ctx = await getJoinContext(slug)
@@ -33,6 +35,12 @@ export default async function EventPage({ params, searchParams }: { params: Prom
         .from(schema.eventAttendees).where(eq(schema.eventAttendees.id, card.id)).limit(1))
     : []
   const unread = live ? await unreadCount(card.id) : 0
+  // Signed in to ScanMe as well? Offer to keep this card on the account (M8).
+  const account = live ? await auth.api.getSession({ headers: await headers() }).catch(() => null) : null
+  const linked = account
+    ? await withOwnerDb(account.user.id, async (db) => rowsOf<{ event_id: string }>(await db.execute(sql`select event_id from my_attended_events()`)))
+        .then((rows) => rows.some((r) => r.event_id === ctx.eventId)).catch(() => false)
+    : false
 
   return (
     <EventShell eyebrow="Event" title={ctx.name} subtitle={[formatWhen(ctx.startsAt), ctx.venue].filter(Boolean).join(' · ')}>
@@ -41,6 +49,7 @@ export default async function EventPage({ params, searchParams }: { params: Prom
         {query.left && <p role="status" className={`${notice} border-[var(--line)] bg-[var(--surface)] text-[var(--muted)]`}>Your card has been removed.</p>}
         {query.access === 'ok' && <p role="status" className={`${notice} border-[var(--accent)] bg-[var(--accent-soft)] font-bold text-[var(--accent-strong)]`}>You are signed in to your event card on this device.</p>}
         {query.access === 'invalid' && <p role="alert" className={`${notice} border-[var(--line)] bg-[var(--surface)]`}>That link is not valid any more. Ask for a new one below or from the organiser.</p>}
+        {query.linked && <p role="status" className={`${notice} border-[var(--accent)] bg-[var(--accent-soft)] font-bold text-[var(--accent-strong)]`}>{linked ? 'This card is kept on your ScanMe account. Find it under Events, Attending.' : 'We could not link this card. It may already be linked to another account.'}</p>}
         {query.prefs && <p role="status" className={`${notice} border-[var(--accent)] bg-[var(--accent-soft)] font-bold text-[var(--accent-strong)]`}>Preferences saved.</p>}
 
         {live && <BadgePlate tag={card.tag} name={card.displayName === 'Walk-up' ? undefined : card.displayName} label="Your tag" />}
@@ -48,6 +57,9 @@ export default async function EventPage({ params, searchParams }: { params: Prom
         <Link href={`/e/${slug}/join`} className="action-primary w-full justify-center">{card ? 'Edit my card' : 'Set up my event profile'}<ArrowRight size={18} weight="bold" /></Link>
         {card && card.status === 'complete' && <Link href={`/e/${slug}/a/${card.id}`} className="action-secondary w-full justify-center">See my card as others do</Link>}
 
+        {live && !linked && (account
+          ? <form action={linkAccount}><input type="hidden" name="slug" value={slug} /><button className="action-secondary w-full justify-center">Keep this card on my ScanMe account</button></form>
+          : <p className="text-sm leading-6 text-[var(--muted)]">Want your own permanent code, and to find this event again later? <Link className="font-bold text-[var(--accent-strong)] underline" href={`/signup?next=${encodeURIComponent(`/e/${slug}`)}`}>Create a free ScanMe account</Link>. Your event card stays separate.</p>)}
         {card && prefs && (
           <form action={savePreferences} className="grid gap-3 rounded-[22px] border border-[var(--line)] bg-[var(--surface)] p-5">
             <input type="hidden" name="slug" value={slug} />

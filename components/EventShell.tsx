@@ -1,4 +1,5 @@
 import { Scan } from '@phosphor-icons/react/dist/ssr'
+import Link from 'next/link'
 import type { ReactNode } from 'react'
 
 /** The public attendee frame. Mirrors the visitor page at /t/[code] so both feel like one product. */
@@ -27,6 +28,13 @@ export function EventShell({ eyebrow, title, subtitle, children }: { eyebrow?: s
  */
 export function EventClosed() {
   return (
-    <EventShell title="This event isn’t open" subtitle="The event may have ended, or the link may be wrong. Ask the organiser for the current link." />
+    <EventShell title="This event isn’t open" subtitle="The event may have ended, or the link may be wrong. Ask the organiser for the current link.">
+      {/* Same for every slug, so it reveals nothing. The conversion path after an event closes. */}
+      <div className="grid gap-3 rounded-[22px] border border-[var(--line)] bg-[var(--surface)] p-5">
+        <p className="font-extrabold">Met good people there?</p>
+        <p className="text-sm leading-6 text-[var(--muted)]">Get your own permanent ScanMe code to share after the event. It is free.</p>
+        <Link href="/signup" className="action-primary w-full justify-center">Create a free account</Link>
+      </div>
+    </EventShell>
   )
 }

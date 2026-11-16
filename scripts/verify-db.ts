@@ -57,7 +57,7 @@ const tables = await admin`
   ORDER BY c.relname
 `
 
-check('29 application tables exist', tables.length === 29, `found ${tables.length}`)
+check('30 application tables exist', tables.length === 30, `found ${tables.length}`)
 check(
   'RLS is enabled and forced on every application table',
   tables.every((table) => table.relrowsecurity && table.relforcerowsecurity),
@@ -549,6 +549,19 @@ check('after a block, neither finds the other in search', (await find(ada, 'I-00
 check('an attendee can report someone at their event', ((await asAtt(ada, visitor`SELECT attendee_report(${ivan}::uuid, ${req}::uuid, 'test report') AS ok`))[1] as Array<{ ok: boolean }>)[0].ok === true)
 check('nobody can report someone from another event', ((await asAtt(ada, visitor`SELECT attendee_report(${bea.id}::uuid, NULL, 'x') AS ok`))[1] as Array<{ ok: boolean }>)[0].ok === false)
 await admin`UPDATE events SET ends_at = now(), discovery = 'badge', messaging_enabled = false WHERE id = ${eventA.eventId}`
+
+// M8 + M9 + M10: plan changes, linking a card to an account, shop interest.
+check('an owner cannot change their own plan', await isRejected(() => asA(app`UPDATE users SET plan = 'pro' WHERE id = ${USER_A}`)))
+check('an owner can still edit their profile', !(await isRejected(() => asA(app`UPDATE users SET bio = 'verify bio', updated_at = now() WHERE id = ${USER_A}`))))
+check('an owner cannot make themselves Pro through the webhook function', await isRejected(() => asA(app`SELECT activate_pro(${USER_A}, 'cus_verify')`)))
+await visitor`SELECT activate_pro(${USER_B}, 'cus_verify_b')`
+check('a verified Stripe payment makes the account Pro', (await admin`SELECT plan FROM users WHERE id = ${USER_B}`)[0].plan === 'pro')
+await visitor`SELECT deactivate_pro('cus_verify_b')`
+check('a cancelled subscription returns the account to Free', (await admin`SELECT plan FROM users WHERE id = ${USER_B}`)[0].plan === 'free')
+check('an attendee links their card to an account once', ((await asAtt(cara.id, visitor`SELECT attendee_link_account(${USER_B}) AS ok`))[1] as Array<{ ok: boolean }>)[0].ok === true && ((await asAtt(cara.id, visitor`SELECT attendee_link_account(${USER_A}) AS ok`))[1] as Array<{ ok: boolean }>)[0].ok === false)
+check('a linked event shows under Attending for that account only', ((await asB(app`SELECT event_id FROM my_attended_events()`))[1] as Array<{ event_id: string }>).some((r) => r.event_id === eventA.eventId) && ((await asA(app`SELECT event_id FROM my_attended_events()`))[1] as unknown[]).length === 0)
+await asA(app`INSERT INTO shop_interests (user_id, product) VALUES (${USER_A}, 'shirt')`)
+check('shop interest is private to its owner', ((await asB(app`SELECT id FROM shop_interests`))[1] as unknown[]).length === 0 && await isRejected(() => asA(app`INSERT INTO shop_interests (user_id, product) VALUES (${USER_B}, 'card')`)))
 
 const f1 = await register(eventC.eventId, 'Ada Obi', 'F', 50, '{"q":"fintech"}')
 const f2 = await register(eventC.eventId, 'Tunde Bello', 'F')

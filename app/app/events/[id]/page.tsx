@@ -59,6 +59,19 @@ export default async function EventPage({ params, searchParams }: { params: Prom
           </form>
         </section>
       )}
+      {published && (
+        <details className="soft-card p-5">
+          <summary className="cursor-pointer font-extrabold">Need more places? Capacity {cap}</summary>
+          <form action={startPublish} className="mt-4 grid gap-3 sm:grid-cols-3">
+            <input type="hidden" name="eventId" value={event.id} />
+            {EVENT_PACKAGES.filter((pkg) => pkg.capacity > cap).map((pkg, index) => <label key={pkg.key} className="soft-card flex cursor-pointer items-center gap-3 p-4"><input type="radio" name="package" value={pkg.key} defaultChecked={index === 0} /><span><span className="block text-sm font-extrabold">{pkg.name}</span><span className="text-sm text-[var(--muted)]">{formatPence(pkg.pricePence)}</span></span></label>)}
+            {EVENT_PACKAGES.some((pkg) => pkg.capacity > cap)
+              ? <button className="action-primary sm:col-span-3" disabled={!paymentsOn}>{paymentsOn ? 'Pay and add places' : 'Payments not switched on yet'}</button>
+              : <p className="text-sm text-[var(--muted)] sm:col-span-3">You have the largest package. Contact us for more.</p>}
+          </form>
+          <p className="mt-2 text-xs text-[var(--muted)]">You pay the full price of the bigger package; credit for the earlier one is not applied yet. Prices are provisional.</p>
+        </details>
+      )}
       {query.added && <p role="status" className="rounded-xl border border-[var(--accent)] bg-[var(--accent-soft)] p-3 text-sm font-bold text-[var(--accent-strong)]">Added {Number(query.added) || 0} {Number(query.added) === 1 ? 'tag' : 'tags'}{Number(query.skipped) > 0 ? `; ${query.skipped} already registered or repeated, skipped` : ''}.</p>}
       {query.link && query.link.startsWith(appBaseUrl()) && (
         <section role="status" className="soft-card grid gap-3 border-[var(--accent)] p-5">

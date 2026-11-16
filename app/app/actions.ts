@@ -7,6 +7,8 @@ import { z } from 'zod'
 import { auth } from '@/lib/auth-server'
 import { headers } from 'next/headers'
 import { schema, withOwnerDb } from '@/lib/db'
+import { appBaseUrl } from '@/lib/event-queries'
+import { createBillingPortal, createProCheckout } from '@/lib/stripe'
 
 async function owner() {
   const session = await auth.api.getSession({ headers: await headers() })
@@ -126,4 +128,21 @@ export async function deleteAccount(formData: FormData) {
     redirect('/app/profile?error=reauth')
   }
   redirect('/?deleted=1')
+}
+
+/** Start Pro through Stripe Checkout. The plan changes only when the signed webhook confirms it. */
+export async function startPro() {
+  const user = await owner()
+  const [row] = await withOwnerDb(user.id, (db) => db.select({ customer: schema.users.stripeCustomerId, plan: schema.users.plan }).from(schema.users).where(eq(schema.users.id, user.id)).limit(1))
+  if (row?.plan !== 'free') redirect('/app/profile')
+  const url = await createProCheckout({ userId: user.id, email: user.email, customerId: row.customer, successUrl: `${appBaseUrl()}/app/profile?pro=1`, cancelUrl: `${appBaseUrl()}/app/profile` })
+  redirect(url ?? '/app/profile?error=payments')
+}
+
+/** Change card or cancel Pro on Stripe's own page. */
+export async function openBilling() {
+  const user = await owner()
+  const [row] = await withOwnerDb(user.id, (db) => db.select({ customer: schema.users.stripeCustomerId }).from(schema.users).where(eq(schema.users.id, user.id)).limit(1))
+  const url = row?.customer ? await createBillingPortal(row.customer, `${appBaseUrl()}/app/profile`) : null
+  redirect(url ?? '/app/profile?error=payments')
 }

@@ -1235,3 +1235,86 @@ END;
 $$;
 REVOKE ALL ON FUNCTION public.attendee_report(uuid, uuid, text) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION public.attendee_report(uuid, uuid, text) TO visitor_user;
+
+-- ==========================================================================
+-- M8 + M9 + M10: account holders and events, Pro subscription, shop interest.
+-- ==========================================================================
+
+-- Owners edit their profile columns only. plan, plan_expires_at, stripe ids, email and
+-- verification flags are written by Better Auth (auth_user) or the Stripe webhook functions.
+REVOKE UPDATE ON users FROM app_user;
+GRANT UPDATE (name, image, handle, bio, role, company, instagram, linkedin, website, tiktok,
+              youtube, spotify, portfolio_url, interests, looking_for, can_offer, updated_at)
+  ON users TO app_user;
+
+-- Link the attendee card proven by this browser to a signed-in ScanMe account, once. The
+-- application passes the verified session user id; the attendee comes from the claim.
+CREATE OR REPLACE FUNCTION public.attendee_link_account(p_user text)
+RETURNS boolean
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM users u WHERE u.id = p_user) THEN RETURN false; END IF;
+  UPDATE event_attendees SET claimed_user_id = p_user, updated_at = now()
+  WHERE id = public.current_attendee_id() AND claimed_user_id IS NULL AND status <> 'withdrawn'
+    AND public.event_directory_open(event_id);
+  RETURN FOUND;
+END;
+$$;
+REVOKE ALL ON FUNCTION public.attendee_link_account(text) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.attendee_link_account(text) TO visitor_user;
+
+-- Events I attended with a card linked to my account (the Events tab "Attending" list).
+-- A function, not a policy, so events and event_attendees policies never reference each other.
+CREATE OR REPLACE FUNCTION public.my_attended_events()
+RETURNS TABLE (event_id uuid, slug text, name text, starts_at timestamptz, ends_at timestamptz, tag text, is_open boolean)
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT e.id, c.slug, e.name, e.starts_at, e.ends_at, a.tag, public.event_directory_open(e.id)
+  FROM event_attendees a JOIN events e ON e.id = a.event_id JOIN codes c ON c.id = e.code_id
+  WHERE a.claimed_user_id = auth.user_id() AND a.status <> 'withdrawn' AND e.status <> 'cancelled'
+  ORDER BY e.starts_at DESC LIMIT 100;
+$$;
+REVOKE ALL ON FUNCTION public.my_attended_events() FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.my_attended_events() TO app_user;
+
+-- Pro subscription, called only by the signature-verified Stripe webhook (visitor role).
+CREATE OR REPLACE FUNCTION public.activate_pro(p_user text, p_customer text)
+RETURNS boolean
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+BEGIN
+  UPDATE users SET plan = 'pro', stripe_customer_id = p_customer, updated_at = now() WHERE id = p_user;
+  RETURN FOUND;
+END;
+$$;
+REVOKE ALL ON FUNCTION public.activate_pro(text, text) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.activate_pro(text, text) TO visitor_user;
+
+CREATE OR REPLACE FUNCTION public.deactivate_pro(p_customer text)
+RETURNS boolean
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+BEGIN
+  UPDATE users SET plan = 'free', updated_at = now() WHERE stripe_customer_id = p_customer AND plan = 'pro';
+  RETURN FOUND;
+END;
+$$;
+REVOKE ALL ON FUNCTION public.deactivate_pro(text) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.deactivate_pro(text) TO visitor_user;
+
+ALTER TABLE shop_interests ENABLE ROW LEVEL SECURITY;
+ALTER TABLE shop_interests FORCE ROW LEVEL SECURITY;
+GRANT SELECT, INSERT, DELETE ON shop_interests TO app_user;
+DROP POLICY IF EXISTS shop_interests_own ON shop_interests;
+CREATE POLICY shop_interests_own ON shop_interests TO app_user
+  USING (user_id = auth.user_id()) WITH CHECK (user_id = auth.user_id());

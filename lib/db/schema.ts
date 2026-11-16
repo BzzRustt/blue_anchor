@@ -737,3 +737,11 @@ export const abuseReports = pgTable('abuse_reports', {
   reason: text('reason').notNull(),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 })
+
+/** "Register interest" in a shop product. Owner-only. */
+export const shopInterests = pgTable('shop_interests', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  userId: text('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  product: text('product').notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [uniqueIndex('shop_interests_once').on(t.userId, t.product)])

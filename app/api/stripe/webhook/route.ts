@@ -15,12 +15,22 @@ export async function POST(request: Request) {
   const raw = await request.text()
   if (!verifyStripeSignature(raw, request.headers.get('stripe-signature'), secret)) return new Response('bad signature', { status: 400 })
 
-  let event: { type?: string; data?: { object?: { id?: string; payment_status?: string } } }
+  let event: { type?: string; data?: { object?: { id?: string; mode?: string; payment_status?: string; client_reference_id?: string; customer?: string; status?: string } } }
   try { event = JSON.parse(raw) } catch { return new Response('bad json', { status: 400 }) }
 
   const object = event.data?.object
-  if (event.type === 'checkout.session.completed' && object?.id && object.payment_status === 'paid') {
-    await visitorDb.execute(sql`select confirm_event_purchase(${object.id}::text)`)
+  if (event.type === 'checkout.session.completed' && object?.id) {
+    if (object.mode === 'subscription' && object.client_reference_id && object.customer && object.payment_status !== 'unpaid') {
+      await visitorDb.execute(sql`select activate_pro(${object.client_reference_id}::text, ${object.customer}::text)`)
+    } else if (object.payment_status === 'paid') {
+      await visitorDb.execute(sql`select confirm_event_purchase(${object.id}::text)`)
+    }
+  }
+  // Pro ends when the subscription does. past_due keeps Pro while Stripe retries the card.
+  const ended = event.type === 'customer.subscription.deleted'
+    || (event.type === 'customer.subscription.updated' && ['canceled', 'unpaid', 'incomplete_expired'].includes(object?.status ?? ''))
+  if (ended && object?.customer) {
+    await visitorDb.execute(sql`select deactivate_pro(${object.customer}::text)`)
   }
   return new Response('ok')
 }

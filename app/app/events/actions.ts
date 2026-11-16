@@ -378,11 +378,12 @@ export async function startPublish(formData: FormData) {
   const purchase = await withOwnerDb(userId, async (db) => {
     const [event] = await db.select({ id: schema.events.id, name: schema.events.name, status: schema.events.status })
       .from(schema.events).where(and(eq(schema.events.id, eventId), eq(schema.events.userId, userId))).limit(1)
-    if (!event || (event.status !== 'draft' && event.status !== 'awaiting_payment')) return null
+    // Published events can buy a bigger package (capacity upgrade); confirmation keeps the larger capacity.
+    if (!event || event.status === 'cancelled') return null
     const [row] = await db.insert(schema.eventPurchases).values({
       eventId, userId, packageKey: pkg.key, capacity: pkg.capacity, amountPence: pkg.pricePence,
     }).returning({ id: schema.eventPurchases.id })
-    await db.execute(sql`select event_set_status(${eventId}::uuid, 'awaiting_payment')`)
+    if (event.status !== 'published') await db.execute(sql`select event_set_status(${eventId}::uuid, 'awaiting_payment')`)
     return { id: row.id, name: event.name }
   })
   if (!purchase) return fail(here, 'not_found')
