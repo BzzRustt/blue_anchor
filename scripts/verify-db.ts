@@ -57,7 +57,7 @@ const tables = await admin`
   ORDER BY c.relname
 `
 
-check('24 application tables exist', tables.length === 24, `found ${tables.length}`)
+check('29 application tables exist', tables.length === 29, `found ${tables.length}`)
 check(
   'RLS is enabled and forced on every application table',
   tables.every((table) => table.relrowsecurity && table.relforcerowsecurity),
@@ -482,6 +482,73 @@ const claim = async (id: string) => (await visitor`SELECT claim_spare_tag(${even
 check('a spare walk-up tag is claimed by its first scan only', (await claim(spare.id)) === true && (await claim(spare.id)) === false)
 check('a real attendee badge can never be claimed', (await claim(attendeeA1.id)) === false)
 check('a visitor can read the visibility choice of a public card', (await visitor`SELECT profile_visibility FROM event_attendees WHERE id = ${attendeeA1.id}`)[0]?.profile_visibility === 'full')
+
+// M6 + M7: finding people, saved people, message requests. Event A is made live for these.
+const asAtt = (id: string, ...q: ReturnType<typeof visitor>[]) => visitor.transaction([visitor`SELECT set_config('request.jwt.claims', ${attendeeClaims(id)}, true)`, ...q])
+const ada = attendeeA1.id, ivan = attendeeA2.id
+const [bea] = await admin`SELECT id FROM event_attendees WHERE event_id = ${eventB.eventId} LIMIT 1`
+const [cara] = await admin`INSERT INTO event_attendees (event_id, tag, display_name, status) VALUES (${eventA.eventId}, 'C-001', 'Cara Coach', 'complete') RETURNING id`
+const find = async (id: string, tag: string) => (await asAtt(id, visitor`SELECT * FROM attendee_find(${tag})`))[1] as Array<{ id: string; answers: Record<string, unknown> }>
+await admin`UPDATE events SET ends_at = now() + interval '1 hour', discovery = 'badge', messaging_enabled = false, networking_opens_at = now() + interval '1 hour' WHERE id = ${eventA.eventId}`
+check('badge search is closed until networking opens', await isRejected(() => find(ada, 'I-001')))
+await admin`UPDATE events SET networking_opens_at = NULL, discovery = 'off' WHERE id = ${eventA.eventId}`
+check('badge search is closed when the organiser turned discovery off', await isRejected(() => find(ada, 'I-001')))
+await admin`UPDATE events SET discovery = 'badge' WHERE id = ${eventA.eventId}`
+check('someone who is not an attendee cannot search', await isRejected(() => visitor`SELECT * FROM attendee_find('I-001')`))
+const byTag = await find(ada, 'i001')
+check('badge search finds a person by tag, with their answers on a full card', byTag.length === 1 && byTag[0].id === ivan)
+check('badge search by number never returns yourself', (await find(ada, '1')).every((r) => r.id !== ada))
+await admin`UPDATE event_attendees SET profile_visibility = 'name', answers = '{"x":"secret"}'::jsonb WHERE id = ${ivan}`
+check('a name-only card comes back without answers', JSON.stringify((await find(ada, 'I-001'))[0]?.answers) === '{}')
+await admin`UPDATE event_attendees SET profile_visibility = 'hidden' WHERE id = ${ivan}`
+check('a hidden card never appears in search', (await find(ada, 'I-001')).length === 0)
+await admin`UPDATE event_attendees SET profile_visibility = 'full' WHERE id = ${ivan}`
+check('every search is logged, misses too', (await find(ada, 'Z-999')).length === 0 && Number((await admin`SELECT count(*) AS n FROM event_lookups WHERE viewer_attendee_id = ${ada} AND target_attendee_id IS NULL`)[0].n) >= 1)
+check('the full directory is closed unless the organiser chose it', await isRejected(() => asAtt(ada, visitor`SELECT * FROM attendee_directory()`)))
+await admin`UPDATE events SET discovery = 'directory' WHERE id = ${eventA.eventId}`
+const dir = (await asAtt(ada, visitor`SELECT id FROM attendee_directory()`))[1] as Array<{ id: string }>
+check('the full directory lists others, not yourself', dir.some((r) => r.id === ivan) && dir.every((r) => r.id !== ada))
+await admin`INSERT INTO event_lookups (event_id, target_attendee_id, viewer_attendee_id, session_token) SELECT ${eventA.eventId}, NULL, ${ada}, 'search-miss' FROM generate_series(1, 60)`
+check('badge search is capped per attendee per hour', await isRejected(() => find(ada, 'I-001')))
+await admin`DELETE FROM event_lookups WHERE viewer_attendee_id = ${ada}`
+
+await asAtt(ada, visitor`INSERT INTO saved_attendees (event_id, attendee_id, saved_attendee_id) VALUES (${eventA.eventId}, ${ada}, ${ivan})`)
+check('an attendee can save someone, privately', ((await asAtt(ada, visitor`SELECT id FROM saved_attendees`))[1] as unknown[]).length === 1 && ((await asAtt(ivan, visitor`SELECT id FROM saved_attendees`))[1] as unknown[]).length === 0)
+check('an attendee cannot save on someone else’s behalf', await isRejected(() => asAtt(ada, visitor`INSERT INTO saved_attendees (event_id, attendee_id, saved_attendee_id) VALUES (${eventA.eventId}, ${ivan}, ${cara.id})`)))
+check('organisers cannot read saved people, requests, messages or reports', (await isRejected(() => asA(app`SELECT id FROM saved_attendees`))) && (await isRejected(() => asA(app`SELECT id FROM message_requests`))) && (await isRejected(() => asA(app`SELECT id FROM event_messages`))) && (await isRejected(() => asA(app`SELECT id FROM abuse_reports`))))
+
+const ask = (from: string, to: string, body = 'Hello there') => asAtt(from, visitor`SELECT * FROM message_request_send(${to}::uuid, ${body})`)
+check('no message requests when the organiser has not turned messaging on', await isRejected(() => ask(ada, ivan)))
+await admin`UPDATE events SET messaging_enabled = true WHERE id = ${eventA.eventId}`
+const sent = (await ask(ada, ivan))[1] as Array<{ request_id: string; notify_to: string | null }>
+const req = sent[0].request_id
+check('a message request is sent, with no email notice unless asked for', !!req && sent[0].notify_to === null)
+check('a second request to the same person is refused', await isRejected(() => ask(ada, ivan)))
+check('the other person cannot open a second, crossing request', await isRejected(() => ask(ivan, ada)))
+check('no replies before the request is accepted', await isRejected(() => asAtt(ada, visitor`SELECT message_send(${req}::uuid, 'pushy')`)))
+check('an attendee of another event cannot see the request', ((await asAtt(bea.id, visitor`SELECT id FROM message_requests WHERE id = ${req}`))[1] as unknown[]).length === 0)
+check('the sender cannot accept their own request', ((await asAtt(ada, visitor`SELECT message_request_respond(${req}::uuid, 'accept') AS ok`))[1] as Array<{ ok: boolean }>)[0].ok === false)
+await admin`UPDATE event_attendees SET allow_messages = false WHERE id = ${cara.id}`
+check('nobody can request someone who turned requests off', await isRejected(() => ask(ada, cara.id)))
+await admin`UPDATE event_attendees SET allow_messages = true WHERE id = ${cara.id}`
+check('the recipient accepts', ((await asAtt(ivan, visitor`SELECT message_request_respond(${req}::uuid, 'accept') AS ok`))[1] as Array<{ ok: boolean }>)[0].ok === true)
+await asAtt(ada, visitor`SELECT message_send(${req}::uuid, 'Great to meet you')`)
+const thread = (await asAtt(ivan, visitor`SELECT body, read_at FROM event_messages WHERE request_id = ${req} ORDER BY created_at`))[1] as Array<{ read_at: string | null }>
+check('both messages reach the recipient, unread', thread.length === 2 && thread.every((m) => m.read_at === null))
+await asAtt(ivan, visitor`SELECT messages_mark_read(${req}::uuid)`)
+check('reading a conversation marks it read', Number((await admin`SELECT count(*) AS n FROM event_messages WHERE request_id = ${req} AND read_at IS NULL`)[0].n) === 0)
+await admin`UPDATE events SET ends_at = now() - interval '1 minute' WHERE id = ${eventA.eventId}`
+check('no new message requests after the event ends', await isRejected(() => ask(ada, cara.id)))
+check('accepted conversations can still reply after the end', !(await isRejected(() => asAtt(ivan, visitor`SELECT message_send(${req}::uuid, 'Following up')`))))
+await admin`UPDATE events SET ends_at = now() - interval '49 hours' WHERE id = ${eventA.eventId}`
+check('replies stop 48 hours after the end', await isRejected(() => asAtt(ivan, visitor`SELECT message_send(${req}::uuid, 'Too late')`)))
+await admin`UPDATE events SET ends_at = now() - interval '1 minute' WHERE id = ${eventA.eventId}`
+await asAtt(ivan, visitor`SELECT attendee_block(${ada}::uuid)`)
+check('after a block, the blocked person cannot message', await isRejected(() => asAtt(ada, visitor`SELECT message_send(${req}::uuid, 'Hello?')`)))
+check('after a block, neither finds the other in search', (await find(ada, 'I-001')).length === 0 && (await find(ivan, 'F-001')).length === 0)
+check('an attendee can report someone at their event', ((await asAtt(ada, visitor`SELECT attendee_report(${ivan}::uuid, ${req}::uuid, 'test report') AS ok`))[1] as Array<{ ok: boolean }>)[0].ok === true)
+check('nobody can report someone from another event', ((await asAtt(ada, visitor`SELECT attendee_report(${bea.id}::uuid, NULL, 'x') AS ok`))[1] as Array<{ ok: boolean }>)[0].ok === false)
+await admin`UPDATE events SET ends_at = now(), discovery = 'badge', messaging_enabled = false WHERE id = ${eventA.eventId}`
 
 const f1 = await register(eventC.eventId, 'Ada Obi', 'F', 50, '{"q":"fintech"}')
 const f2 = await register(eventC.eventId, 'Tunde Bello', 'F')

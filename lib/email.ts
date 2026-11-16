@@ -151,3 +151,17 @@ ${several ? `<ul style="margin:0 0 14px;padding-left:20px">${links.map((l) => `<
     ),
   }
 }
+
+/** A new message request. Never includes the message or who sent it: only that one is waiting. */
+export function messageRequestEmail(eventName: string, url: string): Omit<Email, 'to'> {
+  return {
+    subject: `New message request at ${eventName}`,
+    text: `Hi,\n\nSomeone at ${eventName} sent you a message request on ScanMe. Open your event messages to read it and choose whether to reply:\n\n${url}\n\nYou can turn these emails off in your event preferences.\n\n— ScanMe`,
+    html: layout(
+      `New message request at ${eventName}`,
+      `<p style="margin:0 0 14px">Someone at ${escapeHtml(eventName)} sent you a message request. Open your event messages to read it and choose whether to reply.</p>
+<p style="margin:16px 0 0;color:#666;font-size:14px">You can turn these emails off in your event preferences.</p>`,
+      { label: 'Open my messages', url }
+    ),
+  }
+}

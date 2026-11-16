@@ -595,8 +595,8 @@ export const eventLookups = pgTable(
     eventId: uuid('event_id')
       .notNull()
       .references(() => events.id, { onDelete: 'cascade' }),
+    /** Null for a badge search that matched nobody (logged so guessing is visible and capped). */
     targetAttendeeId: uuid('target_attendee_id')
-      .notNull()
       .references(() => eventAttendees.id, { onDelete: 'cascade' }),
     /** Null when the viewer has not identified themselves as an attendee. */
     viewerAttendeeId: uuid('viewer_attendee_id').references(() => eventAttendees.id, {
@@ -690,3 +690,50 @@ export const auditLog = pgTable(
   (t) => [index('audit_log_event_idx').on(t.eventId, t.createdAt.desc())]
 )
 
+/* M6 + M7: saved people and message requests. Attendee-only; organisers have no grant. */
+export const savedAttendees = pgTable('saved_attendees', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  eventId: uuid('event_id').notNull().references(() => events.id, { onDelete: 'cascade' }),
+  attendeeId: uuid('attendee_id').notNull().references(() => eventAttendees.id, { onDelete: 'cascade' }),
+  savedAttendeeId: uuid('saved_attendee_id').notNull().references(() => eventAttendees.id, { onDelete: 'cascade' }),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [uniqueIndex('saved_attendees_once').on(t.attendeeId, t.savedAttendeeId)])
+
+/** pending -> accepted | declined | blocked. New requests only while the event is live. */
+export const messageRequests = pgTable('message_requests', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  eventId: uuid('event_id').notNull().references(() => events.id, { onDelete: 'cascade' }),
+  fromAttendeeId: uuid('from_attendee_id').notNull().references(() => eventAttendees.id, { onDelete: 'cascade' }),
+  toAttendeeId: uuid('to_attendee_id').notNull().references(() => eventAttendees.id, { onDelete: 'cascade' }),
+  status: text('status').notNull().default('pending'),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  respondedAt: timestamp('responded_at', { withTimezone: true }),
+}, (t) => [uniqueIndex('message_requests_once').on(t.fromAttendeeId, t.toAttendeeId), index('message_requests_to_idx').on(t.toAttendeeId)])
+
+export const eventMessages = pgTable('event_messages', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  requestId: uuid('request_id').notNull().references(() => messageRequests.id, { onDelete: 'cascade' }),
+  fromAttendeeId: uuid('from_attendee_id').notNull().references(() => eventAttendees.id, { onDelete: 'cascade' }),
+  body: text('body').notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  readAt: timestamp('read_at', { withTimezone: true }),
+}, (t) => [index('event_messages_request_idx').on(t.requestId, t.createdAt)])
+
+export const attendeeBlocks = pgTable('attendee_blocks', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  eventId: uuid('event_id').notNull().references(() => events.id, { onDelete: 'cascade' }),
+  blockerAttendeeId: uuid('blocker_attendee_id').notNull().references(() => eventAttendees.id, { onDelete: 'cascade' }),
+  blockedAttendeeId: uuid('blocked_attendee_id').notNull().references(() => eventAttendees.id, { onDelete: 'cascade' }),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [uniqueIndex('attendee_blocks_once').on(t.blockerAttendeeId, t.blockedAttendeeId)])
+
+/** Reviewed by ScanMe, not the organiser. */
+export const abuseReports = pgTable('abuse_reports', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  eventId: uuid('event_id').notNull().references(() => events.id, { onDelete: 'cascade' }),
+  reporterAttendeeId: uuid('reporter_attendee_id').notNull().references(() => eventAttendees.id, { onDelete: 'cascade' }),
+  reportedAttendeeId: uuid('reported_attendee_id').notNull().references(() => eventAttendees.id, { onDelete: 'cascade' }),
+  requestId: uuid('request_id').references(() => messageRequests.id, { onDelete: 'set null' }),
+  reason: text('reason').notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+})

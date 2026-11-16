@@ -899,3 +899,339 @@ $$;
 REVOKE ALL ON FUNCTION public.event_access_code_ok(uuid, text) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION public.event_access_code_ok(uuid, text) TO visitor_user;
 
+
+-- ==========================================================================
+-- M6 + M7: finding people, saved people and message requests.
+-- Everything an attendee does here is checked against current_attendee_id(), the verified
+-- claim the application installs, so one attendee can never act as another. Timing rules
+-- (networking not open yet, no new requests after the event ends, 48h of replies) live here,
+-- not only in the UI. Organisers have no grant on any of these tables.
+-- ==========================================================================
+ALTER TABLE event_lookups ALTER COLUMN target_attendee_id DROP NOT NULL;
+
+ALTER TABLE saved_attendees ENABLE ROW LEVEL SECURITY;
+ALTER TABLE saved_attendees FORCE ROW LEVEL SECURITY;
+ALTER TABLE message_requests ENABLE ROW LEVEL SECURITY;
+ALTER TABLE message_requests FORCE ROW LEVEL SECURITY;
+ALTER TABLE event_messages ENABLE ROW LEVEL SECURITY;
+ALTER TABLE event_messages FORCE ROW LEVEL SECURITY;
+ALTER TABLE attendee_blocks ENABLE ROW LEVEL SECURITY;
+ALTER TABLE attendee_blocks FORCE ROW LEVEL SECURITY;
+ALTER TABLE abuse_reports ENABLE ROW LEVEL SECURITY;
+ALTER TABLE abuse_reports FORCE ROW LEVEL SECURITY;
+
+-- before | live | follow_up | closed. Networking opens at networking_opens_at, or the start.
+CREATE OR REPLACE FUNCTION public.event_networking(p_event uuid)
+RETURNS TABLE (state text, discovery text, messaging boolean, opens_at timestamptz, replies_until timestamptz)
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT CASE
+           WHEN NOT public.event_directory_open(e.id) THEN 'closed'
+           WHEN now() < coalesce(e.networking_opens_at, e.starts_at) THEN 'before'
+           WHEN now() < e.ends_at THEN 'live'
+           ELSE 'follow_up'
+         END,
+         e.discovery, e.messaging_enabled, coalesce(e.networking_opens_at, e.starts_at),
+         least(e.ends_at + interval '48 hours', e.directory_expires_at)
+  FROM events e WHERE e.id = p_event;
+$$;
+REVOKE ALL ON FUNCTION public.event_networking(uuid) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.event_networking(uuid) TO visitor_user;
+
+CREATE OR REPLACE FUNCTION public.attendees_blocked(p_a uuid, p_b uuid)
+RETURNS boolean
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT EXISTS (SELECT 1 FROM attendee_blocks b
+                 WHERE (b.blocker_attendee_id = p_a AND b.blocked_attendee_id = p_b)
+                    OR (b.blocker_attendee_id = p_b AND b.blocked_attendee_id = p_a));
+$$;
+REVOKE ALL ON FUNCTION public.attendees_blocked(uuid, uuid) FROM PUBLIC;
+
+-- The verified caller's attendee row, or an exception. Shared by everything below.
+CREATE OR REPLACE FUNCTION public.me_attendee(p_need_complete boolean)
+RETURNS event_attendees
+LANGUAGE plpgsql
+STABLE
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE v_me event_attendees;
+BEGIN
+  SELECT * INTO v_me FROM event_attendees WHERE id = public.current_attendee_id() AND status <> 'withdrawn';
+  IF v_me.id IS NULL OR (p_need_complete AND v_me.status <> 'complete') THEN
+    RAISE EXCEPTION 'not_attendee';
+  END IF;
+  RETURN v_me;
+END;
+$$;
+REVOKE ALL ON FUNCTION public.me_attendee(boolean) FROM PUBLIC;
+
+-- Badge search. Matches "F-042", "f042", "042" or "42". Every search is logged, misses too,
+-- and capped at 60 an hour per attendee so badge numbers cannot be walked. Hidden cards and
+-- anyone blocked either way never appear; name-only cards come back without answers.
+CREATE OR REPLACE FUNCTION public.attendee_find(p_tag text)
+RETURNS TABLE (id uuid, tag text, role_letter text, display_name text, answers jsonb, visibility text, allow_messages boolean)
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_me event_attendees := public.me_attendee(false);
+  v_net record;
+  v_want text := upper(regexp_replace(coalesce(p_tag, ''), '[^A-Za-z0-9]', '', 'g'));
+  v_found integer := 0;
+BEGIN
+  SELECT * INTO v_net FROM public.event_networking(v_me.event_id);
+  IF v_net.discovery = 'off' OR v_net.state NOT IN ('live', 'follow_up') THEN RAISE EXCEPTION 'not_open'; END IF;
+  IF (SELECT count(*) FROM event_lookups l WHERE l.viewer_attendee_id = v_me.id
+      AND l.looked_up_at > now() - interval '1 hour') >= 60 THEN
+    RAISE EXCEPTION 'rate_limited';
+  END IF;
+  IF v_want = '' OR length(v_want) > 8 THEN RAISE EXCEPTION 'bad_tag'; END IF;
+
+  FOR id, tag, role_letter, display_name, answers, visibility, allow_messages IN
+    SELECT a.id, a.tag, a.role_letter, a.display_name,
+           CASE WHEN a.profile_visibility = 'full' THEN a.answers ELSE '{}'::jsonb END,
+           a.profile_visibility, a.allow_messages
+    FROM event_attendees a
+    WHERE a.event_id = v_me.event_id AND a.status = 'complete' AND a.profile_visibility <> 'hidden'
+      AND a.id <> v_me.id AND NOT public.attendees_blocked(v_me.id, a.id)
+      AND (upper(replace(a.tag, '-', '')) = v_want
+           OR (v_want ~ '^[0-9]+$' AND ltrim(regexp_replace(a.tag, '^[A-Za-z]-', ''), '0') = ltrim(v_want, '0')))
+    ORDER BY a.tag LIMIT 5
+  LOOP
+    INSERT INTO event_lookups (event_id, target_attendee_id, viewer_attendee_id, session_token)
+    VALUES (v_me.event_id, id, v_me.id, 'search');
+    v_found := v_found + 1;
+    RETURN NEXT;
+  END LOOP;
+  IF v_found = 0 THEN
+    INSERT INTO event_lookups (event_id, target_attendee_id, viewer_attendee_id, session_token)
+    VALUES (v_me.event_id, NULL, v_me.id, 'search-miss');
+  END IF;
+END;
+$$;
+REVOKE ALL ON FUNCTION public.attendee_find(text) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.attendee_find(text) TO visitor_user;
+
+-- Full directory, only when the organiser chose it. Same visibility and block rules.
+CREATE OR REPLACE FUNCTION public.attendee_directory()
+RETURNS TABLE (id uuid, tag text, role_letter text, display_name text, answers jsonb, visibility text, allow_messages boolean)
+LANGUAGE plpgsql
+STABLE
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_me event_attendees := public.me_attendee(false);
+  v_net record;
+BEGIN
+  SELECT * INTO v_net FROM public.event_networking(v_me.event_id);
+  IF v_net.discovery <> 'directory' OR v_net.state NOT IN ('live', 'follow_up') THEN RAISE EXCEPTION 'not_open'; END IF;
+  RETURN QUERY
+    SELECT a.id, a.tag, a.role_letter, a.display_name,
+           CASE WHEN a.profile_visibility = 'full' THEN a.answers ELSE '{}'::jsonb END,
+           a.profile_visibility, a.allow_messages
+    FROM event_attendees a
+    WHERE a.event_id = v_me.event_id AND a.status = 'complete' AND a.profile_visibility <> 'hidden'
+      AND a.id <> v_me.id AND NOT public.attendees_blocked(v_me.id, a.id)
+    ORDER BY a.tag LIMIT 1000;
+END;
+$$;
+REVOKE ALL ON FUNCTION public.attendee_directory() FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.attendee_directory() TO visitor_user;
+
+-- Saved people: private to the saver, nobody is notified.
+GRANT SELECT, DELETE ON saved_attendees TO visitor_user;
+GRANT INSERT (event_id, attendee_id, saved_attendee_id) ON saved_attendees TO visitor_user;
+DROP POLICY IF EXISTS saved_attendees_own ON saved_attendees;
+CREATE POLICY saved_attendees_own ON saved_attendees TO visitor_user
+  USING (attendee_id = public.current_attendee_id() AND public.event_directory_open(event_id))
+  WITH CHECK (
+    attendee_id = public.current_attendee_id() AND public.event_directory_open(event_id)
+    AND EXISTS (SELECT 1 FROM event_attendees me WHERE me.id = saved_attendees.attendee_id AND me.event_id = saved_attendees.event_id)
+    AND EXISTS (SELECT 1 FROM event_attendees t WHERE t.id = saved_attendees.saved_attendee_id
+                AND t.event_id = saved_attendees.event_id AND t.status = 'complete' AND t.profile_visibility <> 'hidden')
+  );
+
+-- Conversations are readable only by their two participants. All writes go through functions.
+GRANT SELECT ON message_requests, event_messages TO visitor_user;
+DROP POLICY IF EXISTS message_requests_participants ON message_requests;
+CREATE POLICY message_requests_participants ON message_requests FOR SELECT TO visitor_user
+  USING (public.current_attendee_id() IN (from_attendee_id, to_attendee_id) AND public.event_directory_open(event_id));
+DROP POLICY IF EXISTS event_messages_participants ON event_messages;
+CREATE POLICY event_messages_participants ON event_messages FOR SELECT TO visitor_user
+  USING (EXISTS (SELECT 1 FROM message_requests r WHERE r.id = event_messages.request_id
+                 AND public.current_attendee_id() IN (r.from_attendee_id, r.to_attendee_id)
+                 AND public.event_directory_open(r.event_id)));
+
+-- A message request: one short introduction. Only while the event is live, only if the
+-- organiser turned messaging on and the person accepts requests. Returns the recipient's
+-- email ONLY when they asked to be emailed, so the app can send a notice without content.
+CREATE OR REPLACE FUNCTION public.message_request_send(p_to uuid, p_body text)
+RETURNS TABLE (request_id uuid, notify_to text)
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_me event_attendees := public.me_attendee(true);
+  v_net record;
+  v_to event_attendees;
+  v_body text := btrim(coalesce(p_body, ''));
+BEGIN
+  SELECT * INTO v_net FROM public.event_networking(v_me.event_id);
+  IF NOT v_net.messaging OR v_net.state <> 'live' THEN RAISE EXCEPTION 'messaging_closed'; END IF;
+  SELECT * INTO v_to FROM event_attendees a WHERE a.id = p_to AND a.event_id = v_me.event_id
+    AND a.status = 'complete' AND a.allow_messages AND a.profile_visibility <> 'hidden' AND a.id <> v_me.id;
+  IF v_to.id IS NULL OR public.attendees_blocked(v_me.id, v_to.id) THEN RAISE EXCEPTION 'not_available'; END IF;
+  IF EXISTS (SELECT 1 FROM message_requests r WHERE r.from_attendee_id = v_me.id AND r.to_attendee_id = v_to.id) THEN
+    RAISE EXCEPTION 'already_requested';
+  END IF;
+  IF EXISTS (SELECT 1 FROM message_requests r WHERE r.from_attendee_id = v_to.id AND r.to_attendee_id = v_me.id) THEN
+    RAISE EXCEPTION 'they_asked_you';
+  END IF;
+  IF (SELECT count(*) FROM message_requests r WHERE r.from_attendee_id = v_me.id AND r.status = 'pending') >= 20 THEN
+    RAISE EXCEPTION 'too_many_pending';
+  END IF;
+  IF char_length(v_body) NOT BETWEEN 1 AND 500 THEN RAISE EXCEPTION 'bad_message'; END IF;
+
+  INSERT INTO message_requests (event_id, from_attendee_id, to_attendee_id)
+  VALUES (v_me.event_id, v_me.id, v_to.id) RETURNING id INTO request_id;
+  INSERT INTO event_messages (request_id, from_attendee_id, body) VALUES (request_id, v_me.id, v_body);
+  notify_to := CASE WHEN v_to.notify_email THEN v_to.email END;
+  RETURN NEXT;
+END;
+$$;
+REVOKE ALL ON FUNCTION public.message_request_send(uuid, text) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.message_request_send(uuid, text) TO visitor_user;
+
+-- Recipient answers a pending request: accept | decline | block.
+CREATE OR REPLACE FUNCTION public.message_request_respond(p_request uuid, p_action text)
+RETURNS boolean
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_me event_attendees := public.me_attendee(false);
+  v_req message_requests;
+BEGIN
+  IF p_action NOT IN ('accept', 'decline', 'block') THEN RAISE EXCEPTION 'bad_action'; END IF;
+  SELECT * INTO v_req FROM message_requests r WHERE r.id = p_request AND r.to_attendee_id = v_me.id
+    AND r.status = 'pending' AND public.event_directory_open(r.event_id);
+  IF v_req.id IS NULL THEN RETURN false; END IF;
+  UPDATE message_requests SET status = CASE p_action WHEN 'accept' THEN 'accepted' WHEN 'decline' THEN 'declined' ELSE 'blocked' END,
+    responded_at = now() WHERE id = v_req.id;
+  IF p_action = 'block' THEN
+    INSERT INTO attendee_blocks (event_id, blocker_attendee_id, blocked_attendee_id)
+    VALUES (v_req.event_id, v_me.id, v_req.from_attendee_id) ON CONFLICT DO NOTHING;
+  END IF;
+  RETURN true;
+END;
+$$;
+REVOKE ALL ON FUNCTION public.message_request_respond(uuid, text) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.message_request_respond(uuid, text) TO visitor_user;
+
+-- A reply in an accepted conversation: while live, then for 48 hours after the end.
+CREATE OR REPLACE FUNCTION public.message_send(p_request uuid, p_body text)
+RETURNS uuid
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_me event_attendees := public.me_attendee(false);
+  v_req message_requests;
+  v_net record;
+  v_other uuid;
+  v_body text := btrim(coalesce(p_body, ''));
+  v_id uuid;
+BEGIN
+  SELECT * INTO v_req FROM message_requests r WHERE r.id = p_request AND v_me.id IN (r.from_attendee_id, r.to_attendee_id);
+  IF v_req.id IS NULL OR v_req.status <> 'accepted' THEN RAISE EXCEPTION 'not_available'; END IF;
+  v_other := CASE WHEN v_req.from_attendee_id = v_me.id THEN v_req.to_attendee_id ELSE v_req.from_attendee_id END;
+  IF public.attendees_blocked(v_me.id, v_other) THEN RAISE EXCEPTION 'not_available'; END IF;
+  SELECT * INTO v_net FROM public.event_networking(v_req.event_id);
+  IF v_net.state NOT IN ('live', 'follow_up') OR now() >= v_net.replies_until THEN RAISE EXCEPTION 'messaging_closed'; END IF;
+  IF (SELECT count(*) FROM event_messages m WHERE m.from_attendee_id = v_me.id AND m.created_at > now() - interval '10 minutes') >= 30 THEN
+    RAISE EXCEPTION 'rate_limited';
+  END IF;
+  IF char_length(v_body) NOT BETWEEN 1 AND 1000 THEN RAISE EXCEPTION 'bad_message'; END IF;
+  INSERT INTO event_messages (request_id, from_attendee_id, body) VALUES (v_req.id, v_me.id, v_body) RETURNING id INTO v_id;
+  RETURN v_id;
+END;
+$$;
+REVOKE ALL ON FUNCTION public.message_send(uuid, text) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.message_send(uuid, text) TO visitor_user;
+
+CREATE OR REPLACE FUNCTION public.messages_mark_read(p_request uuid)
+RETURNS void
+LANGUAGE sql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  UPDATE event_messages m SET read_at = now()
+  FROM message_requests r
+  WHERE m.request_id = r.id AND r.id = p_request AND m.read_at IS NULL
+    AND m.from_attendee_id <> public.current_attendee_id()
+    AND public.current_attendee_id() IN (r.from_attendee_id, r.to_attendee_id);
+$$;
+REVOKE ALL ON FUNCTION public.messages_mark_read(uuid) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.messages_mark_read(uuid) TO visitor_user;
+
+-- Block someone at this event: they disappear from my search and cannot message me, and I
+-- disappear from theirs. Any open conversation between us is closed.
+CREATE OR REPLACE FUNCTION public.attendee_block(p_other uuid)
+RETURNS boolean
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE v_me event_attendees := public.me_attendee(false);
+BEGIN
+  IF p_other = v_me.id OR NOT EXISTS (SELECT 1 FROM event_attendees a WHERE a.id = p_other AND a.event_id = v_me.event_id) THEN
+    RETURN false;
+  END IF;
+  INSERT INTO attendee_blocks (event_id, blocker_attendee_id, blocked_attendee_id)
+  VALUES (v_me.event_id, v_me.id, p_other) ON CONFLICT DO NOTHING;
+  UPDATE message_requests SET status = 'blocked', responded_at = now()
+  WHERE (from_attendee_id = v_me.id AND to_attendee_id = p_other) OR (from_attendee_id = p_other AND to_attendee_id = v_me.id);
+  RETURN true;
+END;
+$$;
+REVOKE ALL ON FUNCTION public.attendee_block(uuid) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.attendee_block(uuid) TO visitor_user;
+
+-- Reports go to ScanMe, not the organiser (organisers never see attendee conversations).
+CREATE OR REPLACE FUNCTION public.attendee_report(p_other uuid, p_request uuid, p_reason text)
+RETURNS boolean
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_me event_attendees := public.me_attendee(false);
+  v_reason text := left(btrim(coalesce(p_reason, '')), 500);
+BEGIN
+  IF v_reason = '' OR p_other = v_me.id
+     OR NOT EXISTS (SELECT 1 FROM event_attendees a WHERE a.id = p_other AND a.event_id = v_me.event_id) THEN
+    RETURN false;
+  END IF;
+  IF (SELECT count(*) FROM abuse_reports r WHERE r.reporter_attendee_id = v_me.id) >= 20 THEN RETURN false; END IF;
+  INSERT INTO abuse_reports (event_id, reporter_attendee_id, reported_attendee_id, request_id, reason)
+  VALUES (v_me.event_id, v_me.id, p_other,
+          (SELECT r.id FROM message_requests r WHERE r.id = p_request AND v_me.id IN (r.from_attendee_id, r.to_attendee_id)),
+          v_reason);
+  RETURN true;
+END;
+$$;
+REVOKE ALL ON FUNCTION public.attendee_report(uuid, uuid, text) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.attendee_report(uuid, uuid, text) TO visitor_user;

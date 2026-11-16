@@ -3,6 +3,7 @@ import Link from 'next/link'
 import { ArrowRight } from '@phosphor-icons/react/dist/ssr'
 import { eq } from 'drizzle-orm'
 import { savePreferences } from '@/app/e/[slug]/actions'
+import { AttendeeNav } from '@/components/AttendeeNav'
 import { AttendeeRecoveryForm } from '@/components/AttendeeRecoveryForm'
 import { BadgePlate } from '@/components/BadgePlate'
 import { EventClosed, EventShell } from '@/components/EventShell'
@@ -10,6 +11,7 @@ import { asVisibility } from '@/lib/attendee-access'
 import { schema, withAttendeeDb } from '@/lib/db'
 import { getJoinContext, loadMyCard, verifiedAttendeeId } from '@/lib/event-join'
 import { formatWhen } from '@/lib/events'
+import { unreadCount } from '@/lib/networking'
 
 export const metadata: Metadata = { title: 'Event', robots: { index: false, follow: false } }
 
@@ -30,9 +32,11 @@ export default async function EventPage({ params, searchParams }: { params: Prom
         .select({ visibility: schema.eventAttendees.profileVisibility, allowMessages: schema.eventAttendees.allowMessages, notifyEmail: schema.eventAttendees.notifyEmail })
         .from(schema.eventAttendees).where(eq(schema.eventAttendees.id, card.id)).limit(1))
     : []
+  const unread = live ? await unreadCount(card.id) : 0
 
   return (
     <EventShell eyebrow="Event" title={ctx.name} subtitle={[formatWhen(ctx.startsAt), ctx.venue].filter(Boolean).join(' · ')}>
+      {live && <AttendeeNav slug={slug} active="event" unread={unread} />}
       <div className="grid gap-4">
         {query.left && <p role="status" className={`${notice} border-[var(--line)] bg-[var(--surface)] text-[var(--muted)]`}>Your card has been removed.</p>}
         {query.access === 'ok' && <p role="status" className={`${notice} border-[var(--accent)] bg-[var(--accent-soft)] font-bold text-[var(--accent-strong)]`}>You are signed in to your event card on this device.</p>}
