@@ -29,9 +29,12 @@ export type VisitorExperience = {
 export const personalCodeIds = (userId: string) =>
   sql`(select id from codes where user_id = ${userId} and kind = 'personal')`
 
-function createSlug(name: string) {
-  const base = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 22) || 'hello'
-  return `${base}-${crypto.randomBytes(3).toString('hex')}`
+/**
+ * Random, never derived from the name: the code is in the address bar of every visitor, and an
+ * Incognito page must not reveal who owns it. Codes made before this change keep their old form.
+ */
+function createSlug() {
+  return crypto.randomBytes(6).toString('hex')
 }
 
 export async function ensureOwnerSetup(userId: string, name: string) {
@@ -47,7 +50,7 @@ export async function ensureOwnerSetup(userId: string, name: string) {
     if (!code) {
       ;[code] = await db.insert(schema.codes).values({
         userId,
-        slug: createSlug(name),
+        slug: createSlug(),
         label: 'My ScanMe',
         // Spec: personal sharing starts OFF; the owner turns it on from Home after previewing.
         isLive: false,
