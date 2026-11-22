@@ -19,6 +19,8 @@ interface Props {
 
 export function AttendeeProfileForm({ slug, eventName, roles, questions, expiresLabel, existing }: Props) {
   const [state, action, pending] = useActionState<JoinState, FormData>(submitProfile, { status: 'idle' })
+  // After an error the server hands back what was typed, so a mistyped access code does not wipe the form.
+  const typed = state.status === 'error' ? state.values : undefined
 
   if (state.status === 'saved') {
     return (
@@ -39,15 +41,15 @@ export function AttendeeProfileForm({ slug, eventName, roles, questions, expires
       <form action={action} className="grid gap-5 rounded-[22px] border border-[var(--line)] bg-[var(--surface)] p-5 sm:p-6">
         <input type="hidden" name="slug" value={slug} />
         {existing && <p className="text-sm font-bold">Your tag: <span className="font-mono text-lg">{existing.tag}</span></p>}
-        <label className="field-label">Your name<input className="field-input" name="name" required minLength={2} maxLength={80} autoComplete="name" defaultValue={existing?.name ?? ''} placeholder="As you’d like it on your card" /></label>
-        {!existing && <label className="field-label">Event access code<input className="field-input font-mono uppercase tracking-[.2em]" name="accessCode" required maxLength={20} autoComplete="off" autoCapitalize="characters" placeholder="On the poster or slide" /></label>}
+        <label className="field-label">Your name<input className="field-input" name="name" required minLength={2} maxLength={80} autoComplete="name" defaultValue={typed?.name ?? existing?.name ?? ''} placeholder="As you’d like it on your card" /></label>
+        {!existing && <label className="field-label">Event access code<input className="field-input font-mono uppercase tracking-[.2em]" name="accessCode" required maxLength={20} autoComplete="off" defaultValue={typed?.accessCode ?? ''} autoCapitalize="characters" placeholder="On the poster or slide" /></label>}
         {!existing && roles.length > 0 && (
           <fieldset>
             <legend className="text-sm font-extrabold">I’m here as</legend>
             <div className="mt-3 flex flex-wrap gap-2">
               {roles.map((role, index) => (
                 <label key={role.letter} className="cursor-pointer">
-                  <input type="radio" className="peer sr-only" name="role" value={role.letter} required defaultChecked={index === 0 && roles.length === 1} />
+                  <input type="radio" className="peer sr-only" name="role" value={role.letter} required defaultChecked={typed?.role ? typed.role === role.letter : index === 0 && roles.length === 1} />
                   <span className="inline-flex min-h-10 items-center gap-2 rounded-xl border border-[var(--line)] bg-[var(--surface-strong)] px-4 text-sm font-bold peer-checked:border-[var(--accent)] peer-checked:bg-[var(--accent-soft)] peer-focus-visible:ring-2 peer-focus-visible:ring-[var(--accent)]"><span className="font-mono">{role.letter}</span>{role.label}</span>
                 </label>
               ))}
@@ -56,7 +58,7 @@ export function AttendeeProfileForm({ slug, eventName, roles, questions, expires
         )}
         {questions.map((question) => (
           <label key={question.id} className="field-label">{question.prompt}{!question.required && <span className="font-normal text-[var(--faint)]"> · optional</span>}
-            <textarea className="field-textarea min-h-[84px]" name={`q_${question.id}`} required={question.required} maxLength={500} defaultValue={existing?.answers[question.id] ?? ''} placeholder={question.placeholder} />
+            <textarea className="field-textarea min-h-[84px]" name={`q_${question.id}`} required={question.required} maxLength={500} defaultValue={typed?.answers[question.id] ?? existing?.answers[question.id] ?? ''} placeholder={question.placeholder} />
           </label>
         ))}
         {state.status === 'error' && <p role="alert" className="rounded-xl border border-[color-mix(in_srgb,var(--danger)_32%,var(--line))] p-3 text-sm text-[var(--danger)]">{state.message}</p>}

@@ -19,12 +19,13 @@ import { RateLimiter } from '@/lib/rate-limiter'
 import { auth } from '@/lib/auth-server'
 import { headers } from 'next/headers'
 
+/** What the person typed, handed back with an error so the form keeps it (React clears the form after every submit). */
+export type JoinValues = { name: string; accessCode: string; role: string; answers: Record<string, string> }
+
 export type JoinState =
   | { status: 'idle' }
-  | { status: 'error'; message: string }
+  | { status: 'error'; message: string; values?: JoinValues }
   | { status: 'saved'; tag: string; name: string; created: boolean }
-
-const fail = (message: string): JoinState => ({ status: 'error', message })
 
 /**
  * One action for every door. A browser that already holds a valid attendee cookie is
@@ -33,6 +34,13 @@ const fail = (message: string): JoinState => ({ status: 'error', message })
  * the attendee id comes from the signed cookie, never from the request body.
  */
 export async function submitProfile(_previous: JoinState, formData: FormData): Promise<JoinState> {
+  const values: JoinValues = {
+    name: String(formData.get('name') ?? '').slice(0, 80),
+    accessCode: String(formData.get('accessCode') ?? '').slice(0, 20),
+    role: String(formData.get('role') ?? '').slice(0, 4),
+    answers: Object.fromEntries([...formData.entries()].filter(([key]) => key.startsWith('q_')).map(([key, value]) => [key.slice(2), String(value).slice(0, 500)])),
+  }
+  const fail = (message: string): JoinState => ({ status: 'error', message, values })
   const ctx = await getJoinContext(String(formData.get('slug') ?? ''))
   if (!ctx) return fail('This event is no longer open.')
 
