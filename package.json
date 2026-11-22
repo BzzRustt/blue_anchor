@@ -14,7 +14,9 @@
     "db:migrate": "drizzle-kit migrate",
     "db:rls": "node scripts/apply-rls.mjs",
     "db:provision-runtime": "node scripts/provision-runtime-roles.mjs",
-    "db:verify": "node scripts/verify-db.ts"
+    "db:verify": "node scripts/verify-db.ts",
+    "demo:seed": "node scripts/demo-data.ts seed",
+    "demo:delete": "node scripts/demo-data.ts delete"
   },
   "dependencies": {
     "@neondatabase/serverless": "^1.2.0",
