@@ -1,4 +1,5 @@
 import Link from 'next/link'
+import { AccountLinks } from '@/components/AccountLinks'
 import { Brand } from '@/components/Brand'
 import { ThemeToggle } from '@/components/ThemeToggle'
 
@@ -14,8 +15,7 @@ export function MarketingHeader() {
           <Link className="rounded-[10px] px-4 py-2 text-sm font-semibold hover:bg-[var(--surface-strong)]" href="/plans">Plans</Link>
         </nav>
         <div className="flex items-center gap-2">
-          <Link className="action-quiet hidden sm:inline-flex" href="/login">Log in</Link>
-          <Link className="action-primary" href="/signup">Sign up</Link>
+          <AccountLinks />
           <ThemeToggle />
         </div>
       </div>

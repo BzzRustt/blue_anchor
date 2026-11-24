@@ -67,6 +67,8 @@ const WORDING: Record<string, string> = {
   they_asked_you: 'They have already sent you a request. Answer it in Messages.',
   too_many_pending: 'You have 20 requests waiting for an answer. Wait for some replies first.',
   bad_message: 'Write a short message (up to 500 characters for a request, 1,000 for a reply).',
+  report_reason: 'Please say briefly what happened, so ScanMe can review it.',
+  report_failed: 'Your report could not be sent. You may have reached the limit of 20 reports at this event.',
 }
 
 /** The short code raised by one of the networking SQL functions, or 'error' for anything else. */

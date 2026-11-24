@@ -1,9 +1,11 @@
 'use server'
 
-import { and, eq } from 'drizzle-orm'
+import { and, eq, sql } from 'drizzle-orm'
 import { revalidatePath } from 'next/cache'
 import { redirect } from 'next/navigation'
+import sharp from 'sharp'
 import { z } from 'zod'
+import { checkNickname, imageKind, PHOTO_MAX_BYTES } from '@/lib/profile-rules'
 import { auth } from '@/lib/auth-server'
 import { headers } from 'next/headers'
 import { schema, withOwnerDb } from '@/lib/db'
@@ -18,7 +20,6 @@ async function owner() {
 
 const profileSchema = z.object({
   name: z.string().trim().min(2).max(80),
-  image: z.string().trim().url().max(500).optional().or(z.literal('')),
   handle: z.string().trim().max(40).optional(),
   role: z.string().trim().max(80).optional(),
   company: z.string().trim().max(80).optional(),
@@ -39,12 +40,14 @@ export async function saveProfile(formData: FormData) {
   const user = await owner()
   const parsed = profileSchema.safeParse(Object.fromEntries(formData))
   if (!parsed.success) redirect('/app/profile?error=check')
+  const nickname = checkNickname(parsed.data.handle ?? '')
+  if (!nickname.ok) redirect(`/app/profile?error=nickname&detail=${encodeURIComponent(nickname.reason)}`)
   const emptyToNull = (value?: string) => value || null
   try {
+  // The photo is managed by uploadPhoto/removePhoto, so saving the profile never touches it.
   await withOwnerDb(user.id, (db) => db.update(schema.users).set({
       name: parsed.data.name,
-      image: emptyToNull(parsed.data.image),
-      handle: emptyToNull(parsed.data.handle),
+      handle: nickname.value,
       role: emptyToNull(parsed.data.role),
       company: emptyToNull(parsed.data.company),
       bio: emptyToNull(parsed.data.bio),
@@ -67,7 +70,46 @@ export async function saveProfile(formData: FormData) {
   }
   revalidatePath('/app', 'layout')
   revalidatePath('/t', 'layout')
-  redirect('/app/profile?saved=1')
+  redirect('/app/profile?done=saved')
+}
+
+/**
+ * Profile photo upload. The file must really be a JPEG, PNG or WebP (checked from its bytes), at most
+ * 5 MB and 40 megapixels. It is then re-encoded to a 512 px WebP with all metadata dropped, so
+ * nothing in the original file (location data, hidden payloads) is ever stored or served.
+ */
+export async function uploadPhoto(formData: FormData) {
+  const user = await owner()
+  const file = formData.get('photo')
+  if (!(file instanceof File) || file.size === 0) redirect('/app/profile?error=photo')
+  if (file.size > PHOTO_MAX_BYTES) redirect('/app/profile?error=photo_size')
+  const bytes = new Uint8Array(await file.arrayBuffer())
+  if (!imageKind(bytes)) redirect('/app/profile?error=photo_type')
+  let webp: Buffer
+  try {
+    webp = await sharp(bytes, { limitInputPixels: 40_000_000 }).rotate().resize(512, 512, { fit: 'cover' }).webp({ quality: 82 }).toBuffer()
+  } catch {
+    redirect('/app/profile?error=photo_type')
+  }
+  await withOwnerDb(user.id, async (db) => {
+    await db.execute(sql`insert into user_photos (user_id, mime, bytes, updated_at) values (${user.id}, 'image/webp', decode(${webp.toString('base64')}, 'base64'), now())
+      on conflict (user_id) do update set bytes = excluded.bytes, mime = excluded.mime, updated_at = now()`)
+    await db.update(schema.users).set({ image: `/p/${encodeURIComponent(user.id)}?v=${Date.now()}`, updatedAt: new Date() }).where(eq(schema.users.id, user.id))
+  })
+  revalidatePath('/app', 'layout')
+  revalidatePath('/t', 'layout')
+  redirect('/app/profile?done=photo')
+}
+
+export async function removePhoto() {
+  const user = await owner()
+  await withOwnerDb(user.id, async (db) => {
+    await db.execute(sql`delete from user_photos where user_id = ${user.id}`)
+    await db.update(schema.users).set({ image: null, updatedAt: new Date() }).where(eq(schema.users.id, user.id))
+  })
+  revalidatePath('/app', 'layout')
+  revalidatePath('/t', 'layout')
+  redirect('/app/profile?done=saved')
 }
 
 export async function toggleCode(formData: FormData) {
@@ -92,15 +134,47 @@ export async function archiveResponse(formData: FormData) {
   revalidatePath('/app', 'layout')
 }
 
-/** Stops further responses from the sender's device/network (spec: blocking is free on every plan). */
+/**
+ * Stops further responses from this visitor (spec: blocking is free on every plan). The lasting block
+ * is on their browser token; their network address is blocked for 24 hours only, so other people on a
+ * shared Wi-Fi are not shut out for good. All of this visitor's responses move to Blocked.
+ */
 export async function blockSender(formData: FormData) {
   const user = await owner()
   const responseId = String(formData.get('responseId') ?? '')
   await withOwnerDb(user.id, async (db) => {
-    const [response] = await db.select({ deviceHash: schema.responses.deviceHash }).from(schema.responses).where(and(eq(schema.responses.id, responseId), eq(schema.responses.userId, user.id))).limit(1)
-    if (!response?.deviceHash) return
-    await db.insert(schema.blockedDevices).values({ userId: user.id, deviceHash: response.deviceHash }).onConflictDoNothing()
-    await db.update(schema.responses).set({ blocked: true, archived: true, readAt: new Date() }).where(and(eq(schema.responses.id, responseId), eq(schema.responses.userId, user.id)))
+    const [response] = await db.select({ deviceHash: schema.responses.deviceHash, token: schema.responses.sessionToken }).from(schema.responses).where(and(eq(schema.responses.id, responseId), eq(schema.responses.userId, user.id))).limit(1)
+    if (!response) return
+    await db.insert(schema.blockedDevices).values({ userId: user.id, sessionToken: response.token, deviceHash: response.deviceHash }).onConflictDoNothing()
+    await db.update(schema.responses).set({ blocked: true, archived: true, readAt: new Date() }).where(and(eq(schema.responses.userId, user.id), eq(schema.responses.sessionToken, response.token)))
+  })
+  revalidatePath('/app', 'layout')
+}
+
+export async function unarchiveResponse(formData: FormData) {
+  const user = await owner()
+  const responseId = String(formData.get('responseId') ?? '')
+  await withOwnerDb(user.id, (db) => db.update(schema.responses).set({ archived: false }).where(and(eq(schema.responses.id, responseId), eq(schema.responses.userId, user.id), eq(schema.responses.blocked, false))))
+  revalidatePath('/app', 'layout')
+}
+
+export async function markResponseUnread(formData: FormData) {
+  const user = await owner()
+  const responseId = String(formData.get('responseId') ?? '')
+  await withOwnerDb(user.id, (db) => db.update(schema.responses).set({ readAt: null }).where(and(eq(schema.responses.id, responseId), eq(schema.responses.userId, user.id))))
+  revalidatePath('/app', 'layout')
+}
+
+/** Lifts a block: that visitor can respond again. Their earlier responses stay archived. */
+export async function unblockSender(formData: FormData) {
+  const user = await owner()
+  const responseId = String(formData.get('responseId') ?? '')
+  await withOwnerDb(user.id, async (db) => {
+    const [response] = await db.select({ deviceHash: schema.responses.deviceHash, token: schema.responses.sessionToken }).from(schema.responses).where(and(eq(schema.responses.id, responseId), eq(schema.responses.userId, user.id))).limit(1)
+    if (!response) return
+    // Their browser block, and the network backstop that was created with it.
+    await db.delete(schema.blockedDevices).where(and(eq(schema.blockedDevices.userId, user.id), eq(schema.blockedDevices.sessionToken, response.token)))
+    await db.update(schema.responses).set({ blocked: false }).where(and(eq(schema.responses.userId, user.id), eq(schema.responses.sessionToken, response.token)))
   })
   revalidatePath('/app', 'layout')
 }
@@ -120,12 +194,12 @@ export async function reportResponse(formData: FormData) {
  */
 export async function deleteAccount(formData: FormData) {
   await owner()
-  if (String(formData.get('confirm') ?? '').trim().toUpperCase() !== 'DELETE') redirect('/app/profile?error=confirm')
+  if (String(formData.get('confirm') ?? '').trim().toUpperCase() !== 'DELETE') redirect('/app/settings?error=confirm')
   try {
     await auth.api.deleteUser({ headers: await headers(), body: {} })
   } catch (error) {
     console.error('[account] delete failed:', error)
-    redirect('/app/profile?error=reauth')
+    redirect('/app/settings?error=reauth')
   }
   redirect('/?deleted=1')
 }

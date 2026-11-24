@@ -13,6 +13,7 @@ import {
   parseImport,
   parseRoles,
   parseRoster,
+  publicLabel,
   toLocalInput,
 } from './events.ts'
 
@@ -127,4 +128,12 @@ test('local time round trips through an IANA zone, including across DST', () => 
     assert.equal(toLocalInput(fromLocalInput(local, tz), tz), local)
   }
   assert.equal(fromLocalInput('2026-07-01T18:30', 'Europe/London').toISOString(), '2026-07-01T17:30:00.000Z')
+})
+
+test('card labels read in the first person, not as the question asked', () => {
+  assert.equal(publicLabel('What can you help with?'), 'Can help with')
+  assert.equal(publicLabel('What are you looking for?'), 'Looking for')
+  assert.equal(publicLabel('What is your fun fact?'), 'Fun fact')
+  assert.equal(publicLabel('Your favourite film?'), 'Favourite film')
+  assert.equal(publicLabel('Fun fact about you'), 'Fun fact about you')
 })

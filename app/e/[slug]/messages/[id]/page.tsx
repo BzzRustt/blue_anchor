@@ -2,8 +2,10 @@ import type { Metadata } from 'next'
 import Link from 'next/link'
 import { sql } from 'drizzle-orm'
 import { z } from 'zod'
+import { ArrowLeft } from '@phosphor-icons/react/dist/ssr'
 import { blockAttendee, reportAttendee, sendMessage } from '@/app/e/[slug]/network-actions'
 import { AttendeeNav } from '@/components/AttendeeNav'
+import { ConfirmForm } from '@/components/ConfirmForm'
 import { EventClosed, EventShell } from '@/components/EventShell'
 import { NetworkNotice } from '@/components/NetworkNotice'
 import { SetUpFirst } from '@/components/PeopleList'
@@ -45,6 +47,7 @@ export default async function ThreadPage({ params, searchParams }: { params: Pro
   return (
     <EventShell eyebrow={ctx.name} title={request.other_name ?? 'Conversation'} subtitle={request.other_tag ?? undefined}>
       <AttendeeNav slug={slug} active="messages" unread={unread} />
+      <Link href={`/e/${slug}/messages`} className="action-quiet mb-3 w-fit !px-0"><ArrowLeft size={18} />All messages</Link>
       <NetworkNotice ok={query.ok} e={query.e} />
       <ol className="grid gap-2" aria-label="Messages">
         {messages.map((m) => (
@@ -69,7 +72,8 @@ export default async function ThreadPage({ params, searchParams }: { params: Pro
 
       <details className="mt-6 rounded-xl border border-[var(--line)] p-4 text-sm">
         <summary className="cursor-pointer font-bold">Block or report</summary>
-        <form action={blockAttendee} className="mt-3">{hidden}<button className="font-bold text-[var(--danger)] underline">Block {request.other_name ?? 'this person'}</button></form>
+        <p className="mt-2 leading-6 text-[var(--muted)]"><strong className="text-[var(--ink)]">Block</strong> ends this conversation and hides you from each other in search and on cards. They are not told. <strong className="text-[var(--ink)]">Report</strong> sends what happened to ScanMe for review.</p>
+        <div className="mt-3"><ConfirmForm action={blockAttendee} tone="danger" title={`Block ${request.other_name ?? 'this person'}?`} message="This conversation ends, and you won't see each other in search or on cards at this event. They are not told. You can unblock them from the event page." confirmLabel="Block" triggerLabel={`Block ${request.other_name ?? 'this person'}`} triggerClassName="font-bold text-[var(--danger)] underline">{hidden}</ConfirmForm></div>
         <form action={reportAttendee} className="mt-3 grid gap-2">
           {hidden}
           <label className="field-label">What happened?<textarea className="field-input" name="reason" required maxLength={500} /></label>

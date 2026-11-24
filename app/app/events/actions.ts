@@ -57,7 +57,15 @@ function toUtc(local: string, tzOffset: number): Date {
 function fail(path: string, code: string, detail?: string): never {
   const query = new URLSearchParams({ error: code })
   if (detail) query.set('detail', detail.slice(0, 200))
-  redirect(`${path}?${query}`)
+  redirect(`${path}${path.includes('?') ? '&' : '?'}${query}`)
+}
+
+const TABS = ['overview', 'attendees', 'badges', 'settings'] as const
+/** The event page and tab to return to (the form says which tab it was on); always has a query string. */
+function eventHere(eventId: string, formData: FormData, fallback: (typeof TABS)[number]) {
+  const tab = String(formData.get('tab') ?? '')
+  const q = String(formData.get('q') ?? '').slice(0, 60)
+  return `/app/events/${eventId}?tab=${(TABS as readonly string[]).includes(tab) ? tab : fallback}${q ? `&q=${encodeURIComponent(q)}` : ''}`
 }
 
 export async function createEvent(formData: FormData) {
@@ -157,7 +165,7 @@ async function allocate(
   return withOwnerDb(userId, async (db) => {
     // The userId predicate is belt and braces: RLS already scopes this to the organiser.
     const [event] = await db
-      .select({ id: schema.events.id, roleSet: schema.events.roleSet })
+      .select({ id: schema.events.id, roleSet: schema.events.roleSet, capacity: schema.events.capacity })
       .from(schema.events)
       .where(and(eq(schema.events.id, eventId), eq(schema.events.userId, userId)))
       .limit(1)
@@ -169,7 +177,7 @@ async function allocate(
     if (!built.rows.length) return { error: 'empty' }
 
     const [owner] = await db.select({ plan: schema.users.plan }).from(schema.users).where(eq(schema.users.id, userId)).limit(1)
-    const existing = await db.select({ tag: schema.eventAttendees.tag, email: schema.eventAttendees.email, name: schema.eventAttendees.displayName, ref: schema.eventAttendees.externalRef }).from(schema.eventAttendees).where(eq(schema.eventAttendees.eventId, event.id))
+    const existing = await db.select({ tag: schema.eventAttendees.tag, email: schema.eventAttendees.email, name: schema.eventAttendees.displayName, ref: schema.eventAttendees.externalRef, status: schema.eventAttendees.status }).from(schema.eventAttendees).where(eq(schema.eventAttendees.eventId, event.id))
 
     // Exact repeats are skipped and counted, never merged. A shared (group) email is allowed to repeat;
     // people are then told apart by name.
@@ -184,8 +192,10 @@ async function allocate(
     })
     if (!built.rows.length) return { error: 'empty', detail: skipped ? `Everyone in that list is already registered (${skipped} skipped).` : undefined }
 
-    // Gate on the last row we would add: all-or-nothing, so a roster never half-imports.
-    const gate = canAddAttendee((owner?.plan ?? 'free') as Plan, existing.length + built.rows.length - 1)
+    // Gate on the last row we would add: all-or-nothing, so a roster never half-imports. Uses the
+    // purchased capacity when there is one, and removed (withdrawn) people don't take a place.
+    const active = existing.filter((row) => row.status !== 'withdrawn').length
+    const gate = canAddAttendee((owner?.plan ?? 'free') as Plan, active + built.rows.length - 1, event.capacity)
     if (!gate.ok) return { error: 'attendee_limit', detail: gate.reason }
 
     const tags = existing.map((row) => row.tag)
@@ -214,7 +224,7 @@ export async function importRoster(formData: FormData) {
   const session = await requireOwner()
   const eventId = String(formData.get('eventId') ?? '')
   if (!uuid.safeParse(eventId).success) redirect('/app/events')
-  const here = `/app/events/${eventId}`
+  const here = eventHere(eventId, formData, 'attendees')
 
   // A CSV file, if one was chosen, wins over the pasted text.
   const file = formData.get('file')
@@ -230,8 +240,8 @@ export async function importRoster(formData: FormData) {
   }, 'import')
 
   if ('error' in result) return fail(here, result.error, result.detail)
-  revalidatePath(here)
-  redirect(`${here}?added=${result.added}&skipped=${result.skipped}`)
+  revalidatePath(`/app/events/${eventId}`)
+  redirect(`${here}&added=${result.added}&skipped=${result.skipped}`)
 }
 
 const personSchema = z.object({
@@ -245,7 +255,7 @@ export async function addPerson(formData: FormData) {
   const session = await requireOwner()
   const eventId = String(formData.get('eventId') ?? '')
   if (!uuid.safeParse(eventId).success) redirect('/app/events')
-  const here = `/app/events/${eventId}`
+  const here = eventHere(eventId, formData, 'attendees')
   const parsed = personSchema.safeParse(Object.fromEntries(formData))
   if (!parsed.success) return fail(here, 'invalid')
   const result = await allocate(session.user.id, eventId, ({ roles }) => {
@@ -254,8 +264,8 @@ export async function addPerson(formData: FormData) {
     return { rows: [{ name: parsed.data.name, email: parsed.data.email ? parsed.data.email.toLowerCase() : null, letter: roles.length ? letter : null }] }
   }, 'import')
   if ('error' in result) return fail(here, result.error, result.detail)
-  revalidatePath(here)
-  redirect(`${here}?added=${result.added}&skipped=${result.skipped}`)
+  revalidatePath(`/app/events/${eventId}`)
+  redirect(`${here}&added=${result.added}&skipped=${result.skipped}`)
 }
 
 const groupSchema = z.object({ contactEmail: z.email(), names: z.string().max(8000), letter: z.string().trim().max(1).optional() })
@@ -265,7 +275,7 @@ export async function addGroup(formData: FormData) {
   const session = await requireOwner()
   const eventId = String(formData.get('eventId') ?? '')
   if (!uuid.safeParse(eventId).success) redirect('/app/events')
-  const here = `/app/events/${eventId}`
+  const here = eventHere(eventId, formData, 'attendees')
   const parsed = groupSchema.safeParse(Object.fromEntries(formData))
   if (!parsed.success) return fail(here, 'invalid')
   const result = await allocate(session.user.id, eventId, ({ roles }) => {
@@ -277,8 +287,8 @@ export async function addGroup(formData: FormData) {
     return { rows: names.map((name) => ({ name, email: parsed.data.contactEmail.toLowerCase(), letter: roles.length ? letter : null })) }
   }, 'import', true)
   if ('error' in result) return fail(here, result.error, result.detail)
-  revalidatePath(here)
-  redirect(`${here}?added=${result.added}&skipped=${result.skipped}`)
+  revalidatePath(`/app/events/${eventId}`)
+  redirect(`${here}&added=${result.added}&skipped=${result.skipped}`)
 }
 
 const settingsSchema = z.object({
@@ -296,7 +306,7 @@ export async function updateEventSettings(formData: FormData) {
   const session = await requireOwner()
   const eventId = String(formData.get('eventId') ?? '')
   if (!uuid.safeParse(eventId).success) redirect('/app/events')
-  const here = `/app/events/${eventId}`
+  const here = eventHere(eventId, formData, 'settings')
   const parsed = settingsSchema.safeParse(Object.fromEntries(formData))
   if (!parsed.success) return fail(here, 'invalid')
   const messaging = formData.get('messagingEnabled') === 'on'
@@ -318,8 +328,53 @@ export async function updateEventSettings(formData: FormData) {
     return 'ok'
   })
   if (updated !== 'ok') return fail(here, updated)
-  revalidatePath(here)
-  redirect(`${here}?saved=1`)
+  revalidatePath(`/app/events/${eventId}`)
+  redirect(`${here}&done=saved`)
+}
+
+const MAX_EVENT_QUESTIONS = 6
+
+/**
+ * Edit the questions attendees answer: reword any of them, set the short label shown on cards, and
+ * add up to two optional extras (e.g. "A fun fact about you"). Existing questions keep their ids, so
+ * answers already given stay attached. Clearing an added extra removes it; the first four stay.
+ */
+export async function updateEventQuestions(formData: FormData) {
+  const session = await requireOwner()
+  const eventId = String(formData.get('eventId') ?? '')
+  if (!uuid.safeParse(eventId).success) redirect('/app/events')
+  const here = eventHere(eventId, formData, 'settings')
+  const text = (key: string, max: number) => String(formData.get(key) ?? '').trim().slice(0, max)
+
+  const result = await withOwnerDb(session.user.id, async (db) => {
+    const [event] = await db.select({ campaignId: schema.events.campaignId, status: schema.events.status }).from(schema.events)
+      .where(and(eq(schema.events.id, eventId), eq(schema.events.userId, session.user.id))).limit(1)
+    if (!event || event.status === 'cancelled') return 'not_found'
+    const blocks = await db.select().from(schema.questionBlocks).where(eq(schema.questionBlocks.campaignId, event.campaignId))
+    const byId = new Map(blocks.map((b) => [b.id, b]))
+    let nextPosition = Math.max(-1, ...blocks.map((b) => b.position)) + 1
+    for (let n = 0; n < MAX_EVENT_QUESTIONS; n++) {
+      const id = text(`qid_${n}`, 40)
+      const prompt = text(`prompt_${n}`, 120)
+      const label = text(`label_${n}`, 40)
+      const existing = id ? byId.get(id) : undefined
+      if (existing) {
+        const config = existing.config as Record<string, unknown>
+        if (!prompt) {
+          if (existing.position >= 4) await db.delete(schema.questionBlocks).where(eq(schema.questionBlocks.id, existing.id))
+          continue
+        }
+        await db.update(schema.questionBlocks).set({ config: { ...config, prompt, label: label || undefined } }).where(eq(schema.questionBlocks.id, existing.id))
+      } else if (prompt && blocks.length < MAX_EVENT_QUESTIONS) {
+        if (prompt.length < 3) return 'invalid'
+        await db.insert(schema.questionBlocks).values({ campaignId: event.campaignId, type: 'open_text', position: nextPosition++, required: false, config: { prompt, label: label || undefined, placeholder: 'Optional' } })
+      }
+    }
+    return 'ok'
+  })
+  if (result !== 'ok') return fail(here, result)
+  revalidatePath(`/app/events/${eventId}`)
+  redirect(`${here}&done=saved`)
 }
 
 /** Basic check-in: toggles the arrival time for one attendee. */
@@ -328,11 +383,30 @@ export async function toggleCheckIn(formData: FormData) {
   const eventId = String(formData.get('eventId') ?? '')
   const attendeeId = String(formData.get('attendeeId') ?? '')
   if (!uuid.safeParse(eventId).success || !uuid.safeParse(attendeeId).success) redirect('/app/events')
-  await withOwnerDb(session.user.id, (db) => db.execute(sql`
+  const [row] = await withOwnerDb(session.user.id, async (db) => (await db.execute<{ checked: boolean }>(sql`
     update event_attendees set checked_in_at = case when checked_in_at is null then now() else null end
-    where id = ${attendeeId}::uuid and event_id = ${eventId}::uuid`))
+    where id = ${attendeeId}::uuid and event_id = ${eventId}::uuid returning checked_in_at is not null as checked`)).rows)
   revalidatePath(`/app/events/${eventId}`)
-  redirect(`/app/events/${eventId}`)
+  redirect(`${eventHere(eventId, formData, 'attendees')}&done=${row?.checked ? 'checked_in' : 'checked_out'}`)
+}
+
+/**
+ * Organiser removes someone (a no-show, a duplicate, a fake sign-up). Their place is freed, their
+ * card leaves the directory and their tag number is never reused. The row is kept, so a mistaken
+ * removal can be undone by re-adding the person.
+ */
+export async function removeAttendee(formData: FormData) {
+  const session = await requireOwner()
+  const eventId = String(formData.get('eventId') ?? '')
+  const attendeeId = String(formData.get('attendeeId') ?? '')
+  if (!uuid.safeParse(eventId).success || !uuid.safeParse(attendeeId).success) redirect('/app/events')
+  await withOwnerDb(session.user.id, async (db) => {
+    await db.execute(sql`update event_attendees set status = 'withdrawn', updated_at = now() where id = ${attendeeId}::uuid and event_id = ${eventId}::uuid`)
+    await db.execute(sql`update attendee_access_tokens set revoked_at = now() where attendee_id = ${attendeeId}::uuid and revoked_at is null`)
+    await db.insert(schema.auditLog).values({ userId: session.user.id, eventId, action: 'remove_attendee', targetId: attendeeId })
+  })
+  revalidatePath(`/app/events/${eventId}`)
+  redirect(`${eventHere(eventId, formData, 'attendees')}&done=removed`)
 }
 
 const spareSchema = z.object({
@@ -345,7 +419,7 @@ export async function addSpareTags(formData: FormData) {
   const session = await requireOwner()
   const eventId = String(formData.get('eventId') ?? '')
   if (!uuid.safeParse(eventId).success) redirect('/app/events')
-  const here = `/app/events/${eventId}`
+  const here = eventHere(eventId, formData, 'attendees')
 
   const parsed = spareSchema.safeParse(Object.fromEntries(formData))
   if (!parsed.success) return fail(here, 'invalid')
@@ -360,8 +434,8 @@ export async function addSpareTags(formData: FormData) {
   }, 'walk_up')
 
   if ('error' in result) return fail(here, result.error, result.detail)
-  revalidatePath(here)
-  redirect(`${here}?added=${result.added}`)
+  revalidatePath(`/app/events/${eventId}`)
+  redirect(`${here}&added=${result.added}`)
 }
 
 /** Starts Stripe Checkout for an event's chosen package. Publishing happens only in the webhook. */
@@ -397,13 +471,26 @@ export async function startPublish(formData: FormData) {
   redirect(checkout.url)
 }
 
+/**
+ * Cancelling is deliberately hard to do by accident: the organiser types the event's exact name
+ * (checked again here, not only in the browser), after reading what attendees will lose.
+ */
 export async function cancelEvent(formData: FormData) {
   const session = await requireOwner()
   const eventId = String(formData.get('eventId') ?? '')
   if (!uuid.safeParse(eventId).success) redirect('/app/events')
-  await withOwnerDb(session.user.id, (db) => db.execute(sql`select event_set_status(${eventId}::uuid, 'cancelled')`))
+  const typed = String(formData.get('confirmName') ?? '').trim()
+  const here = `/app/events/${eventId}?tab=settings`
+  const done = await withOwnerDb(session.user.id, async (db) => {
+    const [event] = await db.select({ name: schema.events.name }).from(schema.events).where(and(eq(schema.events.id, eventId), eq(schema.events.userId, session.user.id))).limit(1)
+    if (!event || event.name.trim() !== typed) return false
+    await db.execute(sql`select event_set_status(${eventId}::uuid, 'cancelled')`)
+    await db.insert(schema.auditLog).values({ userId: session.user.id, eventId, action: 'cancel_event' })
+    return true
+  })
+  if (!done) return fail(here, 'confirm_name')
   revalidatePath('/app/events')
-  redirect(`/app/events/${eventId}`)
+  redirect(`/app/events/${eventId}?tab=overview&done=cancelled`)
 }
 
 /**
@@ -417,7 +504,7 @@ export async function issueAccessLink(formData: FormData) {
   const eventId = String(formData.get('eventId') ?? '')
   const attendeeId = String(formData.get('attendeeId') ?? '')
   if (!uuid.safeParse(eventId).success || !uuid.safeParse(attendeeId).success) redirect('/app/events')
-  const here = `/app/events/${eventId}`
+  const here = eventHere(eventId, formData, 'attendees')
   const userId = session.user.id
   const { token, hash } = newAccessToken()
 
@@ -437,5 +524,5 @@ export async function issueAccessLink(formData: FormData) {
   })
   if (!issued) return fail(here, 'not_found')
   const link = `${appBaseUrl()}/e/${encodeURIComponent(issued.slug)}/access?t=${token}`
-  redirect(`${here}?link=${encodeURIComponent(link)}&for=${encodeURIComponent(issued.name.slice(0, 80))}`)
+  redirect(`${here}&link=${encodeURIComponent(link)}&for=${encodeURIComponent(issued.name.slice(0, 80))}`)
 }

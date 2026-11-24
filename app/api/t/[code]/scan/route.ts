@@ -1,15 +1,12 @@
-import crypto from 'node:crypto'
 import { NextRequest, NextResponse } from 'next/server'
 import { cookies } from 'next/headers'
 import { sql } from 'drizzle-orm'
 import { visitorDb } from '@/lib/db'
 import { getVisitorExperience } from '@/lib/product'
+import { hashIp, requestIp } from '@/lib/request-ip'
 import { generateSessionToken } from '@/lib/session-token'
 
 const COOKIE = 'scanme_guest'
-
-function requestIp(request: NextRequest) { return request.headers.get('x-forwarded-for')?.split(',')[0].trim() ?? request.headers.get('x-real-ip') ?? '0.0.0.0' }
-function hashIp(ip: string, secret: string) { return crypto.createHmac('sha256', secret).update(ip).digest('hex') }
 
 export async function POST(request: NextRequest, { params }: { params: Promise<{ code: string }> }) {
   const { code } = await params
@@ -21,7 +18,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
   const token = jar.get(COOKIE)?.value ?? generateSessionToken(secret)
   // Raw insert naming only the columns visitor_user is granted: Drizzle's insert() also lists
   // defaulted columns (id, scanned_at) as DEFAULT, which Postgres rejects without column privilege.
-  await visitorDb.execute(sql`insert into scans (code_id, campaign_id, session_token, ip_hash) values (${experience.code.id}, ${experience.campaign.id}, ${token}, ${hashIp(requestIp(request), secret)})`)
+  await visitorDb.execute(sql`insert into scans (code_id, campaign_id, session_token, ip_hash) values (${experience.code.id}, ${experience.campaign.id}, ${token}, ${hashIp(requestIp(request.headers), secret)})`)
   const response = NextResponse.json({ ok: true })
   if (!jar.get(COOKIE)) response.cookies.set(COOKIE, token, { httpOnly: true, sameSite: 'lax', secure: (process.env.NEXT_PUBLIC_APP_URL ?? '').startsWith('https://'), maxAge: 60 * 60 * 24 * 30, path: '/' })
   return response

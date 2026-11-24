@@ -11,7 +11,8 @@ import {
   rememberAttendee,
   verifiedAttendeeId,
 } from '@/lib/event-join'
-import { asVisibility } from '@/lib/attendee-access'
+import { asVisibility, newAccessToken } from '@/lib/attendee-access'
+import { hashIp, requestIp } from '@/lib/request-ip'
 import { attendeeAccessEmail, emailConfigured, sendEmail } from '@/lib/email'
 import { appBaseUrl } from '@/lib/event-queries'
 import { PLAN_LIMITS, canAddAttendee } from '@/lib/plans'
@@ -20,12 +21,13 @@ import { auth } from '@/lib/auth-server'
 import { headers } from 'next/headers'
 
 /** What the person typed, handed back with an error so the form keeps it (React clears the form after every submit). */
-export type JoinValues = { name: string; accessCode: string; role: string; answers: Record<string, string> }
+export type JoinValues = { name: string; email: string; accessCode: string; role: string; answers: Record<string, string> }
 
 export type JoinState =
   | { status: 'idle' }
   | { status: 'error'; message: string; values?: JoinValues }
-  | { status: 'saved'; tag: string; name: string; created: boolean }
+  /** `link` is the attendee's personal link, shown once right after joining; `emailed` says whether it was also sent. */
+  | { status: 'saved'; tag: string; name: string; created: boolean; link?: string; emailed?: boolean }
 
 /**
  * One action for every door. A browser that already holds a valid attendee cookie is
@@ -36,6 +38,7 @@ export type JoinState =
 export async function submitProfile(_previous: JoinState, formData: FormData): Promise<JoinState> {
   const values: JoinValues = {
     name: String(formData.get('name') ?? '').slice(0, 80),
+    email: String(formData.get('email') ?? '').slice(0, 200),
     accessCode: String(formData.get('accessCode') ?? '').slice(0, 20),
     role: String(formData.get('role') ?? '').slice(0, 4),
     answers: Object.fromEntries([...formData.entries()].filter(([key]) => key.startsWith('q_')).map(([key, value]) => [key.slice(2), String(value).slice(0, 500)])),
@@ -77,6 +80,10 @@ export async function submitProfile(_previous: JoinState, formData: FormData): P
   const role = ctx.roles.length ? String(formData.get('role') ?? '') : null
   if (ctx.roles.length && !ctx.roles.some((candidate) => candidate.letter === role)) return fail('Please choose your role.')
 
+  // Required, so a lost phone can be recovered and alerts can be sent. Never shown to other guests.
+  const email = values.email.trim().toLowerCase()
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return fail('Please enter your email address. We use it to send you your personal link.')
+
   // New registrations need the event access code (printed on the poster / welcome slide).
   const code = String(formData.get('accessCode') ?? '').slice(0, 20)
   const codeResult = await visitorDb.execute(sql`select event_access_code_ok(${ctx.eventId}::uuid, ${code}::text) as ok`)
@@ -88,21 +95,34 @@ export async function submitProfile(_previous: JoinState, formData: FormData): P
   }
 
   try {
+    const secret = process.env.SESSION_SECRET
+    if (!secret) throw new Error('SESSION_SECRET is not set.')
     const result = await visitorDb.execute(sql`
       select attendee_id, attendee_tag from register_attendee(
         ${ctx.eventId}::uuid, ${name}::text, ${role}::text,
-        ${JSON.stringify(answers)}::jsonb, ${ctx.capacity ?? PLAN_LIMITS[ctx.plan].attendeesPerEvent}::integer)
+        ${JSON.stringify(answers)}::jsonb, ${ctx.capacity ?? PLAN_LIMITS[ctx.plan].attendeesPerEvent}::integer,
+        ${email}::text, ${hashIp(requestIp(await headers()), secret)}::text)
     `)
     const rows = (Array.isArray(result) ? result : (result as { rows: unknown[] }).rows) as Array<Record<string, string>>
     const created = rows[0]
     if (!created) return fail('We could not register you. Please try again.')
 
     await rememberAttendee(ctx, created.attendee_id)
-    return { status: 'saved', tag: created.attendee_tag, name, created: true }
+    // Their own personal link: shown once now, and emailed when email is switched on.
+    const { token, hash } = newAccessToken()
+    await withAttendeeDb(created.attendee_id, (tx) => tx.execute(sql`select attendee_add_own_link(${hash}::text)`))
+    const link = `${appBaseUrl()}/e/${encodeURIComponent(String(formData.get('slug') ?? ''))}/access?t=${token}`
+    let emailed = false
+    if (emailConfigured()) {
+      emailed = await sendEmail({ to: email, ...attendeeAccessEmail(ctx.name, [{ name, url: link }]) }).then((r) => r === 'sent').catch(() => false)
+    }
+    return { status: 'saved', tag: created.attendee_tag, name, created: true, link, emailed }
   } catch (error) {
     const reason = error instanceof Error ? error.message : ''
     if (reason.includes('event_full')) return fail('This event has reached its attendee limit. Please speak to the organiser.')
     if (reason.includes('event_closed')) return fail('This event is no longer open.')
+    if (reason.includes('invalid_email')) return fail('Please check your email address.')
+    if (reason.includes('rate_limited')) return fail('A lot of people have just joined from this connection. Please wait a little and try again, or ask the organiser.')
     console.error('[events] registration failed:', error)
     return fail('We could not register you. Please try again.')
   }

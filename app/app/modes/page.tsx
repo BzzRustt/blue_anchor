@@ -1,24 +1,17 @@
 import Link from 'next/link'
-import { and, eq, inArray } from 'drizzle-orm'
 import { ArrowRight, Briefcase, Eye, Ghost, Handshake, IdentificationCard, Sparkle } from '@phosphor-icons/react/dist/ssr'
 import { PageIntro } from '@/components/workspace/PageIntro'
-import { schema, withOwnerDb } from '@/lib/db'
 import { MODE_INFO, MODE_KEYS, type ModeKey } from '@/lib/modes'
 import { requireOwner } from '@/lib/owner'
-import { personalCodeIds } from '@/lib/product'
+import { ownerSummary } from '@/lib/product'
 
 const ICON: Record<ModeKey, typeof Sparkle> = { basic: IdentificationCard, networking: Handshake, incognito: Ghost, creator: Sparkle, portfolio: Briefcase }
 
 export default async function ModesPage() {
   const session = await requireOwner()
-  const { me, live, code } = await withOwnerDb(session.user.id, async (db) => {
-    const [me] = await db.select({ plan: schema.users.plan }).from(schema.users).where(eq(schema.users.id, session.user.id)).limit(1)
-    const [live] = await db.select({ mode: schema.campaigns.mode, name: schema.campaigns.name }).from(schema.campaigns)
-      .where(and(eq(schema.campaigns.userId, session.user.id), eq(schema.campaigns.status, 'live'), inArray(schema.campaigns.codeId, personalCodeIds(session.user.id)))).limit(1)
-    const [code] = await db.select({ isLive: schema.codes.isLive }).from(schema.codes).where(and(eq(schema.codes.userId, session.user.id), eq(schema.codes.kind, 'personal'))).limit(1)
-    return { me, live, code }
-  })
-  const isPro = me?.plan !== 'free'
+  // Already loaded by the layout for this request, so no extra database work.
+  const { plan, active: live, code } = await ownerSummary(session.user.id)
+  const isPro = plan !== 'free'
   const activeKey = live && (MODE_KEYS as readonly string[]).includes(live.mode) ? (live.mode as ModeKey) : null
 
   return (

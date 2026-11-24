@@ -1,4 +1,5 @@
 import Link from 'next/link'
+import { ArrowLeft } from '@phosphor-icons/react/dist/ssr'
 import { createEvent } from '@/app/app/events/actions'
 import { PageIntro } from '@/components/workspace/PageIntro'
 import { TimezoneField } from '@/components/workspace/TimezoneField'
@@ -18,6 +19,7 @@ export default async function NewEventPage({ searchParams }: { searchParams: Pro
 
   return (
     <div className="grid gap-7">
+      <Link href="/app/events" className="action-quiet -mb-4 w-fit !px-0"><ArrowLeft size={18} />Events</Link>
       <PageIntro eyebrow="Run a room" title="New event" body="Free to create and preview. Set the basics and the four questions every attendee answers, then publish when you are ready." />
       <form action={createEvent} className="soft-card grid gap-5 p-5 sm:grid-cols-2 sm:p-7">
         <TimezoneField />

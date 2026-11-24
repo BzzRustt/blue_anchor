@@ -58,11 +58,14 @@ export default async function EventsPage() {
       <section className="grid gap-3">
         <h2 className="text-lg font-extrabold">Attending</h2>
         {attended.length === 0
-          ? <p className="text-sm text-[var(--muted)]">Events where you keep your card on this account appear here. On an event page, choose “Keep this card on my ScanMe account”.</p>
+          ? <p className="text-sm text-[var(--muted)]">Events you add to this account appear here, with a read-only copy of your conversations after the event. On an event page, choose “Add this event to my ScanMe account”.</p>
           : <div className="grid gap-3 md:grid-cols-2">{attended.map((a) => (
-              <article key={a.event_id} className="soft-card flex items-center justify-between gap-3 p-4">
-                <div><h3 className="font-extrabold">{a.name}</h3><p className="text-sm text-[var(--muted)]">{formatWhen(new Date(a.starts_at))} · tag <span className="font-mono">{a.tag}</span></p></div>
-                {a.is_open ? <Link href={`/e/${a.slug}`} className="action-secondary">Open</Link> : <span className="text-xs font-bold text-[var(--faint)]">Closed</span>}
+              <article key={a.event_id} className="soft-card flex flex-wrap items-center justify-between gap-3 p-4">
+                <div><h3 className="font-extrabold">{a.name}</h3><p className="text-sm text-[var(--muted)]">{formatWhen(new Date(a.starts_at))} · tag <span className="font-mono">{a.tag}</span>{!a.is_open && ' · closed'}</p></div>
+                <div className="flex gap-2">
+                  {a.is_open && <Link href={`/e/${a.slug}`} className="action-secondary">Open</Link>}
+                  <Link href={`/app/events/history/${a.event_id}`} className="action-quiet">Conversations</Link>
+                </div>
               </article>
             ))}</div>}
       </section>

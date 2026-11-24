@@ -1,17 +1,15 @@
-import crypto from 'node:crypto'
-import { and, eq, gte, sql } from 'drizzle-orm'
+import { and, eq, gte, or, sql } from 'drizzle-orm'
 import { NextRequest, NextResponse } from 'next/server'
 import { cookies } from 'next/headers'
 import { z } from 'zod'
+import { auth } from '@/lib/auth-server'
 import { schema, visitorDb } from '@/lib/db'
 import { getVisitorExperience } from '@/lib/product'
 import { submissionLimiter } from '@/lib/rate-limiter'
+import { hashIp, requestIp } from '@/lib/request-ip'
 import { verifySessionToken } from '@/lib/session-token'
 
 const bodySchema = z.object({ answers: z.record(z.string(), z.union([z.string().max(500), z.number()])) })
-
-function requestIp(request: NextRequest) { return request.headers.get('x-forwarded-for')?.split(',')[0].trim() ?? request.headers.get('x-real-ip') ?? '0.0.0.0' }
-function hashIp(ip: string, secret: string) { return crypto.createHmac('sha256', secret).update(ip).digest('hex') }
 
 export async function POST(request: NextRequest, { params }: { params: Promise<{ code: string }> }) {
   const { code } = await params
@@ -19,7 +17,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
   if (!secret) return NextResponse.json({ error: 'Server configuration error' }, { status: 500 })
   const token = (await cookies()).get('scanme_guest')?.value
   if (!token || verifySessionToken(token, secret) === null) return NextResponse.json({ error: 'Refresh the page before responding.' }, { status: 401 })
-  const ipHash = hashIp(requestIp(request), secret)
+  const ipHash = hashIp(requestIp(request.headers), secret)
   if (submissionLimiter.isLimited(ipHash)) return NextResponse.json({ error: 'Please wait before sending another response.' }, { status: 429 })
   submissionLimiter.increment(ipHash) // count every attempt, not just successes, so failed probes are limited too
   const payload = bodySchema.safeParse(await request.json().catch(() => null))
@@ -27,7 +25,16 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
   const experience = await getVisitorExperience(code)
   if (!experience) return NextResponse.json({ error: 'This code is not active.' }, { status: 404 })
 
-  const [blocked] = await visitorDb.select({ id: schema.blockedDevices.id }).from(schema.blockedDevices).where(and(eq(schema.blockedDevices.userId, experience.code.userId), eq(schema.blockedDevices.deviceHash, ipHash))).limit(1)
+  // The owner can't message themselves from their own live page (Preview is for that).
+  const viewer = await auth.api.getSession({ headers: request.headers }).catch(() => null)
+  if (viewer?.user.id === experience.code.userId) return NextResponse.json({ error: 'This is your own page, so nothing was sent. Use Preview to try it out.' }, { status: 403 })
+
+  // Blocked by browser (the visitor cookie, permanent) or by network (the IP, 24 hours only, so a
+  // shared Wi-Fi isn't shut out for good but clearing cookies straight away doesn't get round it).
+  const [blocked] = await visitorDb.select({ id: schema.blockedDevices.id }).from(schema.blockedDevices).where(and(
+    eq(schema.blockedDevices.userId, experience.code.userId),
+    or(eq(schema.blockedDevices.sessionToken, token), and(eq(schema.blockedDevices.deviceHash, ipHash), gte(schema.blockedDevices.createdAt, new Date(Date.now() - 86_400_000)))),
+  )).limit(1)
   if (blocked) return NextResponse.json({ error: 'Responses are not available from this device.' }, { status: 403 })
 
   const allowed = new Set(experience.blocks.map((block) => block.id))

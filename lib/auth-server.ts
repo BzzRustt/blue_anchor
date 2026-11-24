@@ -92,6 +92,9 @@ export const auth = betterAuth({
   session: {
     expiresIn: 60 * 60 * 24 * 14,
     updateAge: 60 * 60 * 24,
+    // A signed copy of the session in a cookie for 5 minutes, so most page loads skip the two
+    // session lookups. Trade-off: a session revoked elsewhere stays usable here for up to 5 minutes.
+    cookieCache: { enabled: true, maxAge: 5 * 60 },
   },
   advanced: {
     database: {

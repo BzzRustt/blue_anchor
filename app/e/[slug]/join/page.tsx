@@ -1,4 +1,6 @@
 import type { Metadata } from 'next'
+import Link from 'next/link'
+import { ArrowLeft } from '@phosphor-icons/react/dist/ssr'
 import { AttendeeProfileForm } from '@/components/AttendeeProfileForm'
 import { EventClosed, EventShell } from '@/components/EventShell'
 import { getJoinContext, loadMyCard, verifiedAttendeeId } from '@/lib/event-join'
@@ -22,6 +24,7 @@ export default async function JoinPage({ params }: { params: Promise<{ slug: str
 
   return (
     <EventShell eyebrow={ctx.name} title={card ? 'Your card' : 'Join the event'} subtitle={card ? 'Update your name and your answers.' : 'Add a short card about what you do and what you are looking for. It takes about a minute.'}>
+      <Link href={`/e/${slug}`} className="action-quiet mb-3 w-fit !px-0"><ArrowLeft size={18} />Event page</Link>
       <AttendeeProfileForm
         slug={slug}
         eventName={ctx.name}

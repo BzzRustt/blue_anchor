@@ -1,7 +1,7 @@
 'use client'
 
-import { ArrowRight, CheckCircle, SpinnerGap } from '@phosphor-icons/react'
-import { useActionState } from 'react'
+import { ArrowRight, Check, CheckCircle, Copy, Key, SpinnerGap } from '@phosphor-icons/react'
+import { useActionState, useState } from 'react'
 import { submitProfile, withdrawCard, type JoinState } from '@/app/e/[slug]/actions'
 import { BadgePlate } from '@/components/BadgePlate'
 import { ConfirmForm } from '@/components/ConfirmForm'
@@ -29,8 +29,13 @@ export function AttendeeProfileForm({ slug, eventName, roles, questions, expires
           <p role="status" className="flex items-center gap-2 text-sm font-bold"><CheckCircle size={22} weight="fill" className="text-[var(--accent)]" />{state.created ? 'You are in.' : 'Card updated.'}</p>
           <BadgePlate tag={state.tag} name={state.name} note={`Write it on your badge. You can edit your card until ${expiresLabel}.`} />
         </div>
-        <ExpiryNotice expiresLabel={expiresLabel} />
-        <a className="action-secondary w-full justify-center" href={`/e/${slug}/join`}>Edit my details</a>
+        {state.link && <PersonalLink link={state.link} emailed={!!state.emailed} />}
+        <ExpiryNotice slug={slug} expiresLabel={expiresLabel} />
+        <div className="grid gap-2 sm:grid-cols-2">
+          <a className="action-primary w-full justify-center" href={`/e/${slug}/people`}>Find people</a>
+          <a className="action-secondary w-full justify-center" href={`/e/${slug}/join`}>Edit my details</a>
+        </div>
+        <a className="text-center text-sm font-bold text-[var(--muted)] underline underline-offset-4" href={`/e/${slug}`}>Back to the event page</a>
       </div>
     )
   }
@@ -42,6 +47,7 @@ export function AttendeeProfileForm({ slug, eventName, roles, questions, expires
         <input type="hidden" name="slug" value={slug} />
         {existing && <p className="text-sm font-bold">Your tag: <span className="font-mono text-lg">{existing.tag}</span></p>}
         <label className="field-label">Your name<input className="field-input" name="name" required minLength={2} maxLength={80} autoComplete="name" defaultValue={typed?.name ?? existing?.name ?? ''} placeholder="As you’d like it on your card" /></label>
+        {!existing && <label className="field-label">Your email<input className="field-input" type="email" name="email" required maxLength={200} autoComplete="email" defaultValue={typed?.email ?? ''} placeholder="you@example.com" /><span className="text-xs font-normal text-[var(--muted)]">We use it to send your personal link if you lose this phone. Never shown to other guests.</span></label>}
         {!existing && <label className="field-label">Event access code<input className="field-input font-mono uppercase tracking-[.2em]" name="accessCode" required maxLength={20} autoComplete="off" defaultValue={typed?.accessCode ?? ''} autoCapitalize="characters" placeholder="On the poster or slide" /></label>}
         {!existing && roles.length > 0 && (
           <fieldset>
@@ -59,6 +65,7 @@ export function AttendeeProfileForm({ slug, eventName, roles, questions, expires
         {questions.map((question) => (
           <label key={question.id} className="field-label">{question.prompt}{!question.required && <span className="font-normal text-[var(--faint)]"> · optional</span>}
             <textarea className="field-textarea min-h-[84px]" name={`q_${question.id}`} required={question.required} maxLength={500} defaultValue={typed?.answers[question.id] ?? existing?.answers[question.id] ?? ''} placeholder={question.placeholder} />
+            {/looking|help|offer|topic/i.test(question.prompt) && <span className="text-xs font-normal text-[var(--muted)]">You can list several, separated by commas. The more specific, the easier you are to find.</span>}
           </label>
         ))}
         {state.status === 'error' && <p role="alert" className="rounded-xl border border-[color-mix(in_srgb,var(--danger)_32%,var(--line))] p-3 text-sm text-[var(--danger)]">{state.message}</p>}
@@ -77,12 +84,32 @@ function Visibility({ eventName, expiresLabel }: { eventName: string; expiresLab
   return <p className="text-[12px] leading-5 text-[var(--faint)]">Your name, role and answers are shared with the organiser of {eventName}. Your email is never shown to other guests, and your card closes after {expiresLabel}.</p>
 }
 
-function ExpiryNotice({ expiresLabel }: { expiresLabel: string }) {
+/** The attendee's own link, shown once after joining. Anyone holding it can edit the card, so we say so. */
+function PersonalLink({ link, emailed }: { link: string; emailed: boolean }) {
+  const [copied, setCopied] = useState(false)
+  async function copy() {
+    try { await navigator.clipboard.writeText(link); setCopied(true); window.setTimeout(() => setCopied(false), 1600) } catch { /* the text stays selectable below */ }
+  }
+  return (
+    <div className="grid gap-3 rounded-[22px] border border-[var(--line)] bg-[var(--surface-strong)] p-5">
+      <p className="flex items-center gap-2 font-extrabold"><Key size={20} weight="bold" className="text-[var(--accent)]" />Your personal link</p>
+      <p className="text-sm leading-6 text-[var(--muted)]">Use it to get back to your card on another phone or if you clear your browser. <strong className="text-[var(--ink)]">Keep it private: anyone with this link can edit your card.</strong> {emailed ? 'We have also emailed it to you.' : 'Copy it somewhere safe now; we will email links once email is switched on for this event.'}</p>
+      <p className="break-all rounded-lg bg-[var(--surface-muted)] p-3 font-mono text-xs select-all">{link}</p>
+      <button type="button" onClick={copy} className="action-secondary w-full justify-center">{copied ? <Check size={18} weight="bold" /> : <Copy size={18} />}{copied ? 'Copied' : 'Copy my link'}</button>
+    </div>
+  )
+}
+
+function ExpiryNotice({ slug, expiresLabel }: { slug: string; expiresLabel: string }) {
+  const back = encodeURIComponent(`/e/${slug}`)
   return (
     <div className="rounded-[22px] border border-[var(--accent)] bg-[var(--accent-soft)] p-5">
-      <p className="font-extrabold">Keep a code of your own</p>
-      <p className="mt-1 text-sm leading-6 text-[var(--muted)]">Your card closes after {expiresLabel}. A free ScanMe account gives you your own permanent code, so you stay easy to find after the event.</p>
-      <a href="/signup" className="action-primary mt-4 w-full justify-center">Create a ScanMe account</a>
+      <p className="font-extrabold">Keep your conversations after the event</p>
+      <p className="mt-1 text-sm leading-6 text-[var(--muted)]">Messages close 48 hours after the event ends and your card closes after {expiresLabel}. Add this event to a free ScanMe account to keep a read-only copy of your conversations, and get your own permanent code.</p>
+      <div className="mt-4 grid gap-2 sm:grid-cols-2">
+        <a href={`/signup?next=${back}`} className="action-primary w-full justify-center">Create a free account</a>
+        <a href={`/login?next=${back}`} className="action-secondary w-full justify-center">I have an account</a>
+      </div>
     </div>
   )
 }

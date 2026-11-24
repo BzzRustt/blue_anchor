@@ -5,17 +5,23 @@
  * register_attendee) or through withAttendeeDb, which installs the verified attendee id so
  * RLS — not just this file — stops one attendee touching another's card.
  */
+import { cache } from 'react'
 import { and, asc, eq, sql } from 'drizzle-orm'
 import { cookies, headers } from 'next/headers'
+import { publicLabel } from '@/lib/events'
 import { schema, visitorDb, withAttendeeDb } from '@/lib/db'
 import { signAttendeeToken, verifyAttendeeToken } from '@/lib/attendee-token'
 import type { Role } from '@/lib/events'
 import type { Plan } from '@/lib/plans'
 import { RateLimiter } from '@/lib/rate-limiter'
+import { requestIp } from '@/lib/request-ip'
 
 export interface Question {
   id: string
+  /** Asked on the join form, e.g. "What can you help with?" */
   prompt: string
+  /** Shown above the answer on someone's card, e.g. "Can help with". */
+  label: string
   placeholder: string
   required: boolean
 }
@@ -54,9 +60,7 @@ export interface MyCard {
 export const joinLimiter = new RateLimiter(200, 3_600_000)
 
 export async function clientKey(eventId: string): Promise<string> {
-  const h = await headers()
-  const ip = h.get('x-forwarded-for')?.split(',')[0].trim() ?? h.get('x-real-ip') ?? '0.0.0.0'
-  return `${eventId}:${ip}`
+  return `${eventId}:${requestIp(await headers())}`
 }
 
 function sessionSecret(): string {
@@ -65,8 +69,8 @@ function sessionSecret(): string {
   return secret
 }
 
-/** The event behind a public slug, or null when it is closed, expired or does not exist. */
-export async function getJoinContext(slug: string): Promise<JoinContext | null> {
+/** The event behind a public slug, or null when it is closed, expired or does not exist. Cached per request. */
+export const getJoinContext = cache(async (slug: string): Promise<JoinContext | null> => {
   if (!/^[a-z0-9-]{1,80}$/.test(slug)) return null
 
   const result = await visitorDb.execute(sql`select * from join_event_info(${slug})`)
@@ -94,11 +98,12 @@ export async function getJoinContext(slug: string): Promise<JoinContext | null> 
     questions: blocks
       .filter((block) => block.type === 'open_text')
       .map((block) => {
-        const config = block.config as { prompt?: string; placeholder?: string }
-        return { id: block.id, prompt: config.prompt ?? 'Your answer', placeholder: config.placeholder ?? '', required: block.required }
+        const config = block.config as { prompt?: string; placeholder?: string; label?: string }
+        const prompt = config.prompt ?? 'Your answer'
+        return { id: block.id, prompt, label: config.label?.trim() || publicLabel(prompt), placeholder: config.placeholder ?? '', required: block.required }
       }),
   }
-}
+})
 
 /* ── Identity ─────────────────────────────────────────────────────────────── */
 

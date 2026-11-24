@@ -57,7 +57,7 @@ const tables = await admin`
   ORDER BY c.relname
 `
 
-check('30 application tables exist', tables.length === 30, `found ${tables.length}`)
+check('32 application tables exist', tables.length === 32, `found ${tables.length}`)
 check(
   'RLS is enabled and forced on every application table',
   tables.every((table) => table.relrowsecurity && table.relforcerowsecurity),
@@ -512,6 +512,16 @@ await admin`INSERT INTO event_lookups (event_id, target_attendee_id, viewer_atte
 check('badge search is capped per attendee per hour', await isRejected(() => find(ada, 'I-001')))
 await admin`DELETE FROM event_lookups WHERE viewer_attendee_id = ${ada}`
 
+// 0007: directory search matches names and card answers, never what a name-only card hides.
+await admin`UPDATE event_attendees SET answers = '{"x":"climate fintech"}'::jsonb WHERE id = ${ivan}`
+const search = async (q: string) => (await asAtt(ada, visitor`SELECT id FROM attendee_directory(${q}::text)`))[1] as Array<{ id: string }>
+check('directory search finds someone by a word on their card', (await search('FINTECH')).some((r) => r.id === ivan))
+check('directory search with no match returns nobody', (await search('zz-no-such-word')).length === 0)
+await admin`UPDATE event_attendees SET profile_visibility = 'name' WHERE id = ${ivan}`
+check('directory search never matches the hidden answers of a name-only card', (await search('fintech')).every((r) => r.id !== ivan))
+await admin`UPDATE event_attendees SET profile_visibility = 'full' WHERE id = ${ivan}`
+check('directory search with an empty box lists everyone', (await search('')).some((r) => r.id === ivan))
+
 await asAtt(ada, visitor`INSERT INTO saved_attendees (event_id, attendee_id, saved_attendee_id) VALUES (${eventA.eventId}, ${ada}, ${ivan})`)
 check('an attendee can save someone, privately', ((await asAtt(ada, visitor`SELECT id FROM saved_attendees`))[1] as unknown[]).length === 1 && ((await asAtt(ivan, visitor`SELECT id FROM saved_attendees`))[1] as unknown[]).length === 0)
 check('an attendee cannot save on someone else’s behalf', await isRejected(() => asAtt(ada, visitor`INSERT INTO saved_attendees (event_id, attendee_id, saved_attendee_id) VALUES (${eventA.eventId}, ${ivan}, ${cara.id})`)))
@@ -546,6 +556,12 @@ await admin`UPDATE events SET ends_at = now() - interval '1 minute' WHERE id = $
 await asAtt(ivan, visitor`SELECT attendee_block(${ada}::uuid)`)
 check('after a block, the blocked person cannot message', await isRejected(() => asAtt(ada, visitor`SELECT message_send(${req}::uuid, 'Hello?')`)))
 check('after a block, neither finds the other in search', (await find(ada, 'I-001')).length === 0 && (await find(ivan, 'F-001')).length === 0)
+const canView = async (viewer: string, target: string) => ((await asAtt(viewer, visitor`SELECT attendee_can_view(${target}::uuid) AS ok`))[1] as Array<{ ok: boolean }>)[0].ok
+check('after a block, neither can open the other’s card', (await canView(ada, ivan)) === false && (await canView(ivan, ada)) === false)
+check('a block does not stop anyone else opening the card', (await canView(cara.id, ivan)) === true && (await visitor`SELECT attendee_can_view(${ivan}::uuid) AS ok`)[0].ok === true)
+check('the blocker sees whom they blocked, the blocked person sees nothing', ((await asAtt(ivan, visitor`SELECT id FROM attendee_my_blocks()`))[1] as Array<{ id: string }>).some((r) => r.id === ada) && ((await asAtt(ada, visitor`SELECT id FROM attendee_my_blocks()`))[1] as unknown[]).length === 0)
+check('only the blocker can unblock', ((await asAtt(ada, visitor`SELECT attendee_unblock(${ivan}::uuid) AS ok`))[1] as Array<{ ok: boolean }>)[0].ok === false && ((await asAtt(ivan, visitor`SELECT attendee_unblock(${ada}::uuid) AS ok`))[1] as Array<{ ok: boolean }>)[0].ok === true && (await canView(ada, ivan)) === true)
+await asAtt(ivan, visitor`SELECT attendee_block(${ada}::uuid)`)
 check('an attendee can report someone at their event', ((await asAtt(ada, visitor`SELECT attendee_report(${ivan}::uuid, ${req}::uuid, 'test report') AS ok`))[1] as Array<{ ok: boolean }>)[0].ok === true)
 check('nobody can report someone from another event', ((await asAtt(ada, visitor`SELECT attendee_report(${bea.id}::uuid, NULL, 'x') AS ok`))[1] as Array<{ ok: boolean }>)[0].ok === false)
 await admin`UPDATE events SET ends_at = now(), discovery = 'badge', messaging_enabled = false WHERE id = ${eventA.eventId}`
@@ -560,6 +576,38 @@ await visitor`SELECT deactivate_pro('cus_verify_b')`
 check('a cancelled subscription returns the account to Free', (await admin`SELECT plan FROM users WHERE id = ${USER_B}`)[0].plan === 'free')
 check('an attendee links their card to an account once', ((await asAtt(cara.id, visitor`SELECT attendee_link_account(${USER_B}) AS ok`))[1] as Array<{ ok: boolean }>)[0].ok === true && ((await asAtt(cara.id, visitor`SELECT attendee_link_account(${USER_A}) AS ok`))[1] as Array<{ ok: boolean }>)[0].ok === false)
 check('a linked event shows under Attending for that account only', ((await asB(app`SELECT event_id FROM my_attended_events()`))[1] as Array<{ event_id: string }>).some((r) => r.event_id === eventA.eventId) && ((await asA(app`SELECT event_id FROM my_attended_events()`))[1] as unknown[]).length === 0)
+// 0007: read-only copies of accepted conversations for the linked account only.
+const [keptReq] = await admin`INSERT INTO message_requests (event_id, from_attendee_id, to_attendee_id, status) VALUES (${eventA.eventId}, ${cara.id}, ${ivan}, 'accepted') RETURNING id`
+await admin`INSERT INTO event_messages (request_id, from_attendee_id, body) VALUES (${keptReq.id}, ${cara.id}, 'kept hello')`
+const keptFor = async (as: typeof asA) => (await as(app`SELECT * FROM my_kept_conversations(${eventA.eventId}::uuid)`))[1] as Array<{ messages: Array<{ body: string; mine: boolean }> }>
+const keptB = await keptFor(asB)
+check('a linked account keeps a read-only copy of its accepted conversations', keptB.length === 1 && keptB[0].messages[0].body === 'kept hello' && keptB[0].messages[0].mine === true)
+check('another account sees none of those conversations', (await keptFor(asA)).length === 0)
+check('visitors cannot call the kept-conversations function', await isRejected(() => visitor`SELECT * FROM my_kept_conversations(${eventA.eventId}::uuid)`))
+// 0007: an attendee's own personal link, made right after joining.
+check('an attendee can add a personal link for themselves only', ((await asAtt(cara.id, visitor`SELECT attendee_add_own_link(${sha('d'.repeat(64))}) AS ok`))[1] as Array<{ ok: boolean }>)[0].ok === true && (await redeem('verify-event-a', 'd'.repeat(64))) === cara.id)
+check('a malformed link hash is refused', ((await asAtt(cara.id, visitor`SELECT attendee_add_own_link('nope') AS ok`))[1] as Array<{ ok: boolean }>)[0].ok === false)
+check('someone who is not an attendee cannot add a link', await isRejected(() => visitor`SELECT attendee_add_own_link(${sha('e'.repeat(64))})`))
+// 0007: nickname links never reveal an Incognito page, and photos follow the live-code rule.
+// (The original personal code and campaign of A were deleted above, so these checks make their own.)
+const [codeA2] = await admin`INSERT INTO codes (user_id, slug, kind, is_live) VALUES (${USER_A}, 'verify-a2', 'personal', true) RETURNING id`
+const [campaignA2] = await admin`INSERT INTO campaigns (user_id, code_id, mode, name, status) VALUES (${USER_A}, ${codeA2.id}, 'networking', 'A2 live', 'live') RETURNING id`
+await admin`UPDATE users SET handle = 'verifya' WHERE id = ${USER_A}`
+check('a nickname resolves to the owner’s live code', (await visitor`SELECT code_for_handle('VerifyA') AS slug`)[0].slug === 'verify-a2')
+await admin`UPDATE campaigns SET mode = 'incognito' WHERE id = ${campaignA2.id}`
+check('a nickname does not resolve while the live Mode is Incognito', (await visitor`SELECT code_for_handle('verifya') AS slug`)[0].slug === null)
+await admin`UPDATE campaigns SET mode = 'networking' WHERE id = ${campaignA2.id}`
+await admin`INSERT INTO user_photos (user_id, bytes) VALUES (${USER_A}, decode('00', 'hex'))`
+check('a visitor can load the photo of an owner whose code is live', (await visitor`SELECT user_id FROM user_photos WHERE user_id = ${USER_A}`).length === 1)
+check('another owner cannot read or replace my photo', ((await asB(app`SELECT user_id FROM user_photos WHERE user_id = ${USER_A}`))[1] as unknown[]).length === 0 && await isRejected(() => asB(app`INSERT INTO user_photos (user_id, bytes) VALUES (${USER_A}, decode('01', 'hex'))`)))
+await admin`UPDATE codes SET is_live = false WHERE id = ${codeA2.id}`
+check('the photo is unavailable while sharing is paused', (await visitor`SELECT user_id FROM user_photos WHERE user_id = ${USER_A}`).length === 0)
+await admin`UPDATE codes SET is_live = true WHERE id = ${codeA2.id}`
+// 0007: personal blocks by browser token are readable to the respond check.
+await admin`INSERT INTO blocked_devices (user_id, session_token) VALUES (${USER_A}, 'verify-blocked-token')`
+check('the respond check can see a browser block', (await visitor`SELECT id FROM blocked_devices WHERE user_id = ${USER_A} AND session_token = 'verify-blocked-token'`).length === 1)
+check('a browser token can be blocked only once per owner', await isRejected(() => admin`INSERT INTO blocked_devices (user_id, session_token) VALUES (${USER_A}, 'verify-blocked-token')`))
+
 await asA(app`INSERT INTO shop_interests (user_id, product) VALUES (${USER_A}, 'shirt')`)
 check('shop interest is private to its owner', ((await asB(app`SELECT id FROM shop_interests`))[1] as unknown[]).length === 0 && await isRejected(() => asA(app`INSERT INTO shop_interests (user_id, product) VALUES (${USER_B}, 'card')`)))
 
@@ -615,6 +663,22 @@ check(
     (await isRejected(() => auth`SELECT * FROM register_attendee(${eventC.eventId}::uuid, 'Nope', 'F', '{}'::jsonb, 50)`))
 )
 
+// 0007: joining needs an email, one network can join 30 times an hour, removed people free places.
+const register2 = (eventId: string, name: string, letter: string | null, email: string, ip = 'verify-ip', max = 500) => visitor`
+  SELECT attendee_id, attendee_tag FROM register_attendee(${eventId}::uuid, ${name}, ${letter}, '{}'::jsonb, ${max}::integer, ${email}, ${ip})`
+check('joining without an email is refused', await isRejected(() => register2(eventC.eventId, 'No Mail', 'F', '')))
+check('joining with a malformed email is refused', await isRejected(() => register2(eventC.eventId, 'Bad Mail', 'F', 'not-an-email')))
+const joined = await register2(eventC.eventId, 'Mail Person', 'F', ' Mail@Example.TEST ')
+check('joining stores the email, trimmed and lower-cased', (await admin`SELECT email FROM event_attendees WHERE id = ${joined[0].attendee_id}`)[0].email === 'mail@example.test')
+await admin`INSERT INTO join_attempts (event_id, ip_hash) SELECT ${eventC.eventId}, 'verify-busy-ip' FROM generate_series(1, 30)`
+check('one network can join at most 30 times an hour per event', await isRejected(() => register2(eventC.eventId, 'Thirty One', 'F', 'x@example.test', 'verify-busy-ip')))
+check('another network can still join', !(await isRejected(() => register2(eventC.eventId, 'Other Net', 'F', 'y@example.test', 'verify-calm-ip'))))
+const active = (await admin`SELECT count(*)::int AS n FROM event_attendees WHERE event_id = ${eventC.eventId} AND status <> 'withdrawn'`)[0].n
+check('a full event refuses the next person', await isRejected(() => register2(eventC.eventId, 'Over Cap', 'F', 'z@example.test', 'verify-ip-2', active)))
+await asB(app`UPDATE event_attendees SET status = 'withdrawn' WHERE id = ${joined[0].attendee_id}`)
+check('an organiser removing someone frees their place', !(await isRejected(() => register2(eventC.eventId, 'Took The Place', 'F', 'w@example.test', 'verify-ip-2', active))))
+check('another organiser cannot remove my attendees', ((await asA(app`UPDATE event_attendees SET status = 'withdrawn' WHERE event_id = ${eventC.eventId} RETURNING id`))[1] as unknown[]).length === 0)
+
 // An imported attendee (status 'invited') must be able to load and complete their own card.
 const [invited] = await admin`
   INSERT INTO event_attendees (event_id, tag, role_letter, display_name, email, source, status)
@@ -662,6 +726,7 @@ const afterExpiry = await visitor`
 const eventAfterExpiry = await visitor`SELECT id FROM events WHERE id = ${eventA.eventId}`
 check('the directory is dark once it expires', afterExpiry.length === 0, `${afterExpiry.length} still visible`)
 check('the event itself is unreadable once it expires', eventAfterExpiry.length === 0)
+check('kept conversations stay readable after the event closes', (await keptFor(asB)).length === 1)
 
 // A claimed attendee keeps what they collected.
 await admin`

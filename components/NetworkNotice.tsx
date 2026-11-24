@@ -8,7 +8,8 @@ const DONE: Record<string, string> = {
   decline: 'Declined. They will not be told why.',
   block: 'Blocked. You can no longer find or message each other at this event.',
   sent: 'Sent.',
-  reported: 'Thank you. Your report goes to ScanMe, not to the organiser.',
+  reported: 'Thank you. Your report has been sent to ScanMe (not the organiser) for review. If you feel unsafe, block them too.',
+  unblocked: 'Unblocked. You can find each other again; old conversations stay closed.',
 }
 
 /** Result of a networking action, from ?ok= / ?e= codes. Unknown codes never render as text. */

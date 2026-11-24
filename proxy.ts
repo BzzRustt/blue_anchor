@@ -4,6 +4,8 @@ import { RateLimiter } from '@/lib/rate-limiter'
 const PROBE_ROUTES = new Set(['/admin', '/dashboard', '/cms', '/wp-admin', '/administrator'])
 const apiRateLimiter = new RateLimiter(60, 60_000)
 const MAX_BODY_BYTES = 10_240
+// Workspace forms (signed-in only) carry CSV imports and profile photos; the actions check size again.
+const MAX_WORKSPACE_BODY_BYTES = 6 * 1024 * 1024
 
 function getIP(request: NextRequest): string {
   return request.headers.get('x-forwarded-for')?.split(',')[0].trim()
@@ -24,7 +26,8 @@ export function proxy(request: NextRequest) {
 
   if (request.method === 'POST') {
     const contentLength = request.headers.get('content-length')
-    if (contentLength && parseInt(contentLength, 10) > MAX_BODY_BYTES) {
+    const max = pathname.startsWith('/app/') || pathname === '/app' ? MAX_WORKSPACE_BODY_BYTES : MAX_BODY_BYTES
+    if (contentLength && parseInt(contentLength, 10) > max) {
       return new NextResponse(null, { status: 413 })
     }
   }

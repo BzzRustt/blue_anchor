@@ -2,9 +2,11 @@ import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import { ArrowLeft, Check, Eye, LockSimple } from '@phosphor-icons/react/dist/ssr'
 import { ConfirmForm } from '@/components/ConfirmForm'
+import { DirtyForm, SaveButton } from '@/components/DirtyForm'
 import { activateMode, saveMode } from '@/app/app/modes/actions'
 import { getModeState } from '@/lib/mode-queries'
-import { isModeKey, MODE_INFO, QUESTION_TYPES, SHOW_LABELS, ALLOWED_SHOW, type ModeConfig } from '@/lib/modes'
+import { QuestionFields } from '@/components/workspace/QuestionFields'
+import { isModeKey, MODE_INFO, SHOW_LABELS, ALLOWED_SHOW, type ModeConfig } from '@/lib/modes'
 import { canActivateMode } from '@/lib/plans'
 import { requireOwner } from '@/lib/owner'
 
@@ -47,7 +49,7 @@ export default async function ModeEditor({ params, searchParams }: { params: Pro
         <div role="note" className="flex flex-col gap-3 rounded-xl border border-[var(--line)] bg-[var(--surface-muted)] p-4 sm:flex-row sm:items-center sm:justify-between"><p className="flex items-start gap-2 text-sm"><LockSimple size={18} weight="bold" className="mt-0.5 shrink-0" />{info.name} is a Pro Mode. You can look around and preview it. Saving changes and activating need Pro.</p><Link href="/plans" className="action-secondary shrink-0">Compare plans</Link></div>
       )}
 
-      <form action={saveMode} className="grid gap-5">
+      <DirtyForm action={saveMode} className="grid gap-5">
         <input type="hidden" name="mode" value={mode} />
         <fieldset disabled={locked} className="grid min-w-0 gap-5 border-0 p-0">
           <Section title="What to show" hint="Choose which details from your Profile visitors can see. Edit the details themselves in Profile.">
@@ -101,11 +103,7 @@ export default async function ModeEditor({ params, searchParams }: { params: Pro
           <Section title="What to ask" hint={mode === 'creator' ? 'An optional poll for your audience.' : mode === 'basic' || mode === 'incognito' ? 'One optional question. Responses land in your personal inbox.' : 'This Mode asks for an introduction or enquiry, so there is no extra question to set up.'}>
             {(mode === 'basic' || mode === 'incognito') && (
               <>
-                <Toggle name="question_on" label="Show a question" checked={c.question.on} />
-                <label className="field-label">Question type<select className="field-select" name="question_type" defaultValue={c.question.type}>{QUESTION_TYPES.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}</select></label>
-                <Text name="question_prompt" label="Question" value={c.question.prompt} placeholder="Rate my drip from 1 to 5" />
-                <label className="field-label">Rating scale<select className="field-select" name="question_max" defaultValue={String(c.question.max)}><option value="5">1 to 5</option><option value="10">1 to 10</option></select></label>
-                <label className="field-label">Choices (single choice only, one per line, at least two)<textarea className="field-textarea" name="question_options" defaultValue={c.question.options.join('\n')} maxLength={300} /></label>
+                <QuestionFields on={c.question.on} type={c.question.type} prompt={c.question.prompt} max={c.question.max} options={c.question.options} />
               </>
             )}
             {mode === 'creator' && (
@@ -117,8 +115,8 @@ export default async function ModeEditor({ params, searchParams }: { params: Pro
             )}
           </Section>
         </fieldset>
-        {!locked && <div className="flex flex-wrap gap-2"><button className="action-primary">Save changes</button></div>}
-      </form>
+        {!locked && <SaveButton />}
+      </DirtyForm>
 
       <section aria-label="Preview and activate" className="soft-card flex flex-col gap-4 p-5 sm:flex-row sm:items-center sm:justify-between sm:p-6">
         <div><h2 className="text-lg font-extrabold tracking-[-.03em]">{active ? 'This Mode is active' : 'Ready to try it?'}</h2><p className="mt-1 text-sm text-[var(--muted)]">{campaign ? 'See exactly what a visitor sees. Nothing is sent or counted in the preview.' : 'Preview shows the default layout until you save your changes.'}</p></div>

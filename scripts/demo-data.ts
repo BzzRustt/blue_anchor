@@ -263,6 +263,9 @@ async function seedAll() {
   const kwame = PEOPLE.find((p) => p.key === 'attendee')!
   const [linked] = await insert('event_attendees', [{ event_id: mixer.event.id, tag: 'F-099', role_letter: 'F', display_name: kwame.name, email: 'attendee@demo.scanme.test', answers: { [Object.keys(m[0].answers as Row)[0]]: 'Backend engineer exploring a startup idea', [Object.keys(m[0].answers as Row)[1]]: 'A co-founder' }, source: 'native', status: 'complete', claimed_user_id: ids.attendee }])
 
+  // Kwame (the demo account) has a conversation too, so Events > Attending > Conversations has something to show.
+  await conversation(mixer.event.id, linked, m[3], t0 + 25 * 60_000, ['Hi, I saw you are building in fintech. I am a backend engineer looking for a co-founder.', 'Hey Kwame! Yes, let us talk. Are you around after the panel?', 'Perfect, see you by the stage.'])
+
   // Ended event: one conversation to reply to (allowed for 48 hours), no new requests.
   const b = breakfast.attendees
   const t1 = now - 5 * HOUR

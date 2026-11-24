@@ -46,6 +46,7 @@ export default async function MessagesPage({ params, searchParams }: { params: P
       <NetworkNotice ok={query.ok} e={query.e} />
       {!net.messaging && <p className="mb-4 text-sm leading-6 text-[var(--muted)]">The organiser has not turned on messages for this event.</p>}
       {net.messaging && net.state === 'follow_up' && <p className="mb-4 text-sm leading-6 text-[var(--muted)]">The event has ended. You can reply in accepted conversations until {formatWhen(net.repliesUntil)}; new requests are closed.</p>}
+      {net.messaging && (net.state === 'live' || net.state === 'follow_up') && <KeepNotice slug={slug} until={formatWhen(net.repliesUntil)} />}
 
       <div className="grid gap-6">
         <section className="grid gap-2">
@@ -53,7 +54,7 @@ export default async function MessagesPage({ params, searchParams }: { params: P
           {!incoming.length && <p className="text-sm text-[var(--muted)]">No new requests.</p>}
           {incoming.map((r) => (
             <article key={r.id} className="grid gap-3 rounded-xl border border-[var(--line)] bg-[var(--surface)] p-4">
-              <p className="text-sm"><Link className="font-bold underline" href={`/e/${slug}/a/${r.other_id}`}>{r.other_name ?? 'An attendee'}</Link> <span className="font-mono text-xs text-[var(--muted)]">{r.other_tag}</span></p>
+              <p className="text-sm"><Link className="font-bold underline" href={`/e/${slug}/a/${r.other_id}?from=${encodeURIComponent(back)}`}>{r.other_name ?? 'An attendee'}</Link> <span className="font-mono text-xs text-[var(--muted)]">{r.other_tag}</span></p>
               {r.first_body && <p className="whitespace-pre-line text-sm leading-6">{r.first_body}</p>}
               <form action={respondRequest} className="flex flex-wrap gap-2">
                 <input type="hidden" name="slug" value={slug} /><input type="hidden" name="back" value={back} /><input type="hidden" name="request" value={r.id} />
@@ -89,5 +90,15 @@ export default async function MessagesPage({ params, searchParams }: { params: P
         )}
       </div>
     </EventShell>
+  )
+}
+
+/** During and just after the event: when messages close, and how to keep a copy (a linked ScanMe account). */
+function KeepNotice({ slug, until }: { slug: string; until: string }) {
+  return (
+    <div className="mb-4 rounded-xl border border-[var(--line)] bg-[var(--surface)] p-4 text-sm leading-6">
+      <p><strong>Messages close {until}</strong>, 48 hours after the event ends. Swap contact details in a conversation if you want to stay in touch.</p>
+      <p className="mt-1 text-[var(--muted)]">Want a read-only copy after that? <Link className="font-bold text-[var(--accent)] underline" href={`/e/${slug}#keep`}>Add this event to your free ScanMe account</Link>. Accounts keep a read-only copy of their conversations.</p>
+    </div>
   )
 }

@@ -381,10 +381,13 @@ export const blockedDevices = pgTable(
     userId: text('user_id')
       .notNull()
       .references(() => users.id, { onDelete: 'cascade' }),
-    deviceHash: text('device_hash').notNull(),
+    /** Keyed hash of the network address. Only blocks for 24 hours (see the respond route). */
+    deviceHash: text('device_hash'),
+    /** The visitor's browser token (scanme_guest cookie). The lasting part of a block. */
+    sessionToken: text('session_token'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => [uniqueIndex('blocked_devices_unique').on(t.userId, t.deviceHash)]
+  (t) => [index('blocked_devices_hash_idx').on(t.userId, t.deviceHash), uniqueIndex('blocked_devices_token_unique').on(t.userId, t.sessionToken)]
 )
 
 /**

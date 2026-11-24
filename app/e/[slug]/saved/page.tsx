@@ -22,7 +22,7 @@ export default async function SavedPage({ params, searchParams }: { params: Prom
     withAttendeeDb(me.id, async (tx) => rowsOf<FoundPerson>(await tx.execute(sql`
       select a.id, a.tag, a.display_name, case when a.profile_visibility = 'full' then a.answers else '{}'::jsonb end as answers
       from saved_attendees s join event_attendees a on a.id = s.saved_attendee_id
-      where s.attendee_id = ${me.id}::uuid and a.profile_visibility <> 'hidden'
+      where s.attendee_id = ${me.id}::uuid and a.profile_visibility <> 'hidden' and attendee_can_view(a.id)
       order by s.created_at desc`))),
     unreadCount(me.id),
   ])
@@ -32,7 +32,7 @@ export default async function SavedPage({ params, searchParams }: { params: Prom
       <AttendeeNav slug={slug} active="saved" unread={unread} />
       <NetworkNotice ok={query.ok} e={query.e} />
       <p className="mb-3 text-sm leading-6 text-[var(--muted)]">Only you can see this list. Save someone from their card.</p>
-      <PeopleList slug={slug} people={people} empty="You have not saved anyone yet." questions={ctx.questions} />
+      <PeopleList slug={slug} from={`/e/${slug}/saved`} people={people} empty="You have not saved anyone yet." questions={ctx.questions} />
     </EventShell>
   )
 }

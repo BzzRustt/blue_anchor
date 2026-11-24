@@ -29,6 +29,24 @@ export const DEFAULT_QUESTIONS = [
   { prompt: 'Sector, stage or topics', placeholder: 'e.g. fintech, pre-seed, climate' },
 ] as const
 
+/**
+ * The heading shown above an answer on someone's card. The join form asks "What can you help
+ * with?", but on Priya's card it should read "Can help with", not "What can you help with?".
+ */
+const LABELS: Record<string, string> = {
+  'what do you do?': 'What I do',
+  'what are you looking for?': 'Looking for',
+  'what can you help with?': 'Can help with',
+  'sector, stage or topics': 'Sector, stage or topics',
+}
+export function publicLabel(prompt: string): string {
+  const known = LABELS[prompt.trim().toLowerCase()]
+  if (known) return known
+  // A custom question: drop a leading "What is your"/"Your" and the question mark ("Your fun fact?" -> "Fun fact").
+  const trimmed = prompt.trim().replace(/\?+$/, '').replace(/^(what('|’)?s|what is|what are)\s+(your|you)\s+/i, '').replace(/^your\s+/i, '')
+  return trimmed ? trimmed[0].toUpperCase() + trimmed.slice(1) : prompt
+}
+
 const MAX_ROLES = 8
 
 // ponytail: fixed to London time, the launch market. Add a per-event zone when it isn't.

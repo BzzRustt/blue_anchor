@@ -89,8 +89,9 @@ export function parseModeConfig(mode: ModeKey, raw: unknown): ModeConfig {
   const q = obj(input.question)
   const qDefaults = mode === 'incognito'
     ? { on: true, prompt: 'What do you think of my outfit? Rate it from 1 to 5.' }
-    : mode === 'basic' ? { on: true, prompt: 'Rate my drip from 1 to 5' } : { on: false, prompt: '' }
-  const type = (['scale', 'yes_no', 'choice', 'open_text'] as const).find((t) => t === q.type) ?? 'scale'
+    : mode === 'basic' ? { on: true, prompt: 'What’s on your mind today?' } : { on: false, prompt: '' }
+  // A new Basic Mode asks a friendly open question; everything else defaults to a rating.
+  const type = (['scale', 'yes_no', 'choice', 'open_text'] as const).find((t) => t === q.type) ?? (mode === 'basic' ? 'open_text' : 'scale')
   const m = obj(input.message)
   const featured = obj(obj(input.creator).featured)
   const poll = obj(obj(input.creator).poll)

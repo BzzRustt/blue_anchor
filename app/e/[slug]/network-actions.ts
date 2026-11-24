@@ -96,15 +96,40 @@ export async function blockAttendee(formData: FormData) {
   const { me, slug, here } = await begin(formData)
   const target = String(formData.get('target') ?? '')
   if (!uuid.safeParse(target).success) go(here, 'e', 'error')
-  await withAttendeeDb(me.id, (tx) => tx.execute(sql`select attendee_block(${target}::uuid)`))
+  try {
+    await withAttendeeDb(me.id, (tx) => tx.execute(sql`select attendee_block(${target}::uuid)`))
+  } catch (error) {
+    go(here, 'e', networkingErrorCode(error))
+  }
   go(`/e/${slug}/messages`, 'ok', 'block')
+}
+
+export async function unblockAttendee(formData: FormData) {
+  const { me, here } = await begin(formData)
+  const target = String(formData.get('target') ?? '')
+  if (!uuid.safeParse(target).success) go(here, 'e', 'error')
+  try {
+    await withAttendeeDb(me.id, (tx) => tx.execute(sql`select attendee_unblock(${target}::uuid)`))
+  } catch (error) {
+    go(here, 'e', networkingErrorCode(error))
+  }
+  go(here, 'ok', 'unblocked')
 }
 
 export async function reportAttendee(formData: FormData) {
   const { me, here } = await begin(formData)
   const target = String(formData.get('target') ?? '')
   const request = String(formData.get('request') ?? '')
+  const reason = String(formData.get('reason') ?? '').trim().slice(0, 500)
   if (!uuid.safeParse(target).success) go(here, 'e', 'error')
-  await withAttendeeDb(me.id, (tx) => tx.execute(sql`select attendee_report(${target}::uuid, ${uuid.safeParse(request).success ? request : null}::uuid, ${String(formData.get('reason') ?? '').slice(0, 500)})`))
-  go(here, 'ok', 'reported')
+  if (!reason) go(here, 'e', 'report_reason')
+  let saved = false
+  try {
+    const [row] = await withAttendeeDb(me.id, async (tx) => rowsOf<{ ok: boolean }>(await tx.execute(sql`select attendee_report(${target}::uuid, ${uuid.safeParse(request).success ? request : null}::uuid, ${reason}) as ok`)))
+    saved = !!row?.ok
+  } catch (error) {
+    go(here, 'e', networkingErrorCode(error))
+  }
+  // Only thank them when a report was actually recorded (the function refuses past 20 reports).
+  go(here, saved ? 'ok' : 'e', saved ? 'reported' : 'report_failed')
 }

@@ -1,13 +1,15 @@
 import Link from 'next/link'
-import QRCode from 'qrcode'
-import { and, desc, eq, gte, isNull } from 'drizzle-orm'
-import { Archive, ChatCircleDots, Check, Eye, Flag, Pause, Play, Prohibit, SquaresFour } from '@phosphor-icons/react/dist/ssr'
-import { archiveResponse, blockSender, markResponseRead, reportResponse, toggleCode } from '@/app/app/actions'
+import { ChatCircleDots, Eye, Pause, SquaresFour } from '@phosphor-icons/react/dist/ssr'
+import { toggleCode } from '@/app/app/actions'
 import { ConfirmForm } from '@/components/ConfirmForm'
+import { GoLiveDialog } from '@/components/workspace/GoLiveDialog'
+import { PendingLink, PendingNav, PendingRegion } from '@/components/PendingNav'
+import { InboxControls } from '@/components/workspace/InboxControls'
+import { ResponseRow } from '@/components/workspace/ResponseRow'
 import { ShowQrDialog } from '@/components/workspace/ShowQrDialog'
-import { schema, withOwnerDb } from '@/lib/db'
+import { asInboxFilter, inboxItems, type InboxFilter } from '@/lib/inbox'
 import { requireOwner } from '@/lib/owner'
-import { answerText, homeData } from '@/lib/product'
+import { ownerSummary } from '@/lib/product'
 
 type Search = { view?: string; filter?: string; source?: string }
 
@@ -23,11 +25,17 @@ export default async function HomePage({ searchParams }: { searchParams: Promise
   const session = await requireOwner()
   const query = await searchParams
   const view = query.view === 'analytics' ? 'analytics' : 'inbox'
-  const home = await homeData(session.user.id)
+  const filter = asInboxFilter(query.filter)
+  const source = query.source ?? ''
+  // The summary (shared with the layout) and the inbox list run side by side, not one after the other.
+  const [home, items] = await Promise.all([
+    ownerSummary(session.user.id),
+    view === 'inbox' ? inboxItems(session.user.id, filter, source) : Promise.resolve([]),
+  ])
   const { code, active, counts, days, since, campaigns } = home
+  if (!code) throw new Error('Personal code missing after setup')
   const baseUrl = (process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3000').replace(/\/$/, '')
   const url = `${baseUrl}/t/${code.slug}`
-  const qr = await QRCode.toDataURL(url, { width: 720, margin: 2, color: { dark: '#10251a', light: '#ffffff' } })
   const shortCode = code.slug.toUpperCase()
 
   const stats = [
@@ -40,7 +48,7 @@ export default async function HomePage({ searchParams }: { searchParams: Promise
     <div className="grid gap-7">
       <header>
         <p className="overline">Personal space</p>
-        <h1 className="mt-3 text-3xl font-extrabold tracking-[-.05em] sm:text-4xl">{greeting(session.user.name)}</h1>
+        <h1 className="mt-3 text-3xl font-extrabold tracking-[-.05em] sm:text-4xl">{greeting(home.name ?? session.user.name)}</h1>
         <p className="mt-2 text-sm text-[var(--muted)]">Here is what has been happening with your ScanMe.</p>
       </header>
 
@@ -57,86 +65,49 @@ export default async function HomePage({ searchParams }: { searchParams: Promise
         <h2 className="relative mt-4 text-3xl font-extrabold tracking-[-.05em]">{active ? modeName(active.mode) : 'No Mode'} <span className="serif-accent text-[var(--lime)]">Mode</span></h2>
         <p className="relative mt-2 max-w-md text-sm leading-6 text-[var(--on-deep-muted)]">Your permanent code <strong className="text-white">{shortCode}</strong> opens whatever Mode you have chosen to share.{!code.isLive && ' Sharing is paused, so visitors see an unavailable page.'}</p>
         <div className="relative mt-6 flex flex-wrap items-center gap-2">
-          <ShowQrDialog qr={qr} url={url} code={shortCode} triggerClassName="action-secondary !border-white !bg-white !text-[var(--deep)]" />
-          <a href={`/t/${code.slug}`} target="_blank" rel="noreferrer" className="action-secondary !border-white/50 !bg-transparent !text-white hover:!bg-white/10"><Eye size={18} />Visitor preview</a>
+          <ShowQrDialog url={url} code={shortCode} triggerClassName="action-secondary !border-white !bg-white !text-[var(--deep)]" />
+          {/* The preview route never sends anything, so you can't message yourself from it. */}
+          <Link href={`/app/modes/${active?.mode ?? 'basic'}/preview`} className="action-secondary !border-white/50 !bg-transparent !text-white hover:!bg-white/10"><Eye size={18} />Visitor preview</Link>
           <Link href="/app/modes" className="action-quiet !text-[var(--lime)] hover:!bg-white/10"><SquaresFour size={18} />Switch Mode</Link>
           <span className="ml-auto">
             {code.isLive
               ? <ConfirmForm action={toggleCode} tone="danger" title="Pause personal sharing?" message="Anyone scanning your QR will see an unavailable page until you turn sharing back on. Your Modes and responses stay in your workspace." confirmLabel="Pause sharing" triggerLabel={<><Pause size={18} weight="bold" />Pause sharing</>} triggerClassName="action-quiet !text-white hover:!bg-white/10"><input type="hidden" name="codeId" value={code.id} /><input type="hidden" name="enabled" value="false" /></ConfirmForm>
-              : <form action={toggleCode}><input type="hidden" name="codeId" value={code.id} /><input type="hidden" name="enabled" value="true" /><button className="action-secondary !border-[var(--lime)] !bg-[var(--lime)] !text-[var(--on-lime)]"><Play size={18} weight="bold" />Turn sharing on</button></form>}
+              : <GoLiveDialog codeId={code.id} modeName={active ? modeName(active.mode) : 'Basic'} modeKey={active?.mode ?? 'basic'} question={home.liveQuestion} />}
           </span>
         </div>
       </section>
 
-      <section aria-label="Inbox and analytics" className="grid gap-5">
-        <nav aria-label="Home sections" className="flex gap-6 border-b border-[var(--line)]">
-          {([['inbox', 'Personal inbox'], ['analytics', 'Audience insights']] as const).map(([key, label]) => <Link key={key} href={key === 'inbox' ? '/app' : '/app?view=analytics'} aria-current={view === key ? 'page' : undefined} className={`-mb-px border-b-2 px-1 pb-3 text-sm font-bold ${view === key ? 'border-[var(--accent)] text-[var(--ink)]' : 'border-transparent text-[var(--muted)] hover:text-[var(--ink)]'}`}>{label}</Link>)}
-        </nav>
-        {view === 'inbox'
-          ? <Inbox userId={session.user.id} query={query} since={since} campaigns={campaigns} />
-          : <Analytics days={days} visits={counts.visits30} responses={counts.responses30} clicks={counts.clicks30} />}
-      </section>
+      <PendingNav>
+        <section aria-label="Inbox and analytics" className="grid gap-5">
+          <nav aria-label="Home sections" className="flex gap-6 border-b border-[var(--line)]">
+            {([['inbox', 'Personal inbox'], ['analytics', 'Audience insights']] as const).map(([key, label]) => <PendingLink key={key} href={key === 'inbox' ? '/app' : '/app?view=analytics'} current={view === key} className={`-mb-px border-b-2 px-1 pb-3 text-sm font-bold ${view === key ? 'border-[var(--accent)] text-[var(--ink)]' : 'border-transparent text-[var(--muted)] hover:text-[var(--ink)]'}`}>{label}</PendingLink>)}
+          </nav>
+          {view === 'inbox' ? (
+            <div className="grid gap-4">
+              <p className="text-sm text-[var(--muted)]">Messages and responses through your personal QR only. Click one to read it in full.</p>
+              <InboxControls filter={filter} source={campaigns.some((c) => c.id === source) ? source : ''} counts={{ all: counts.open, unread: counts.unread, archived: counts.archived, blocked: counts.blocked }} sources={campaigns.map((c) => ({ id: c.id, label: `${c.name} · ${modeName(c.mode)}` }))} />
+              <PendingRegion className="soft-card overflow-hidden">
+                {items.length === 0 ? <EmptyInbox filter={filter} /> : <ul className="divide-y divide-[var(--line)]">{items.map((item) => <ResponseRow key={item.id} item={item} />)}</ul>}
+              </PendingRegion>
+              {since && <p className="text-xs text-[var(--muted)]">The free plan shows responses from the last 30 days.</p>}
+            </div>
+          ) : (
+            <PendingRegion><Analytics days={days} visits={counts.visits30} responses={counts.responses30} clicks={counts.clicks30} /></PendingRegion>
+          )}
+        </section>
+      </PendingNav>
     </div>
   )
 }
 
-async function Inbox({ userId, query, since, campaigns }: { userId: string; query: Search; since: Date | null; campaigns: Array<{ id: string; name: string; mode: string }> }) {
-  const filter = query.filter === 'unread' || query.filter === 'archived' ? query.filter : 'all'
-  const source = campaigns.some((c) => c.id === query.source) ? query.source! : ''
-  const shown = filter === 'archived' ? eq(schema.responses.archived, true) : filter === 'unread' ? and(eq(schema.responses.archived, false), isNull(schema.responses.readAt)) : eq(schema.responses.archived, false)
-  const items = await withOwnerDb(userId, (db) => db.select({ response: schema.responses, campaignName: schema.campaigns.name, mode: schema.campaigns.mode })
-    .from(schema.responses)
-    .leftJoin(schema.campaigns, eq(schema.campaigns.id, schema.responses.campaignId))
-    .where(and(eq(schema.responses.userId, userId), shown, since ? gte(schema.responses.submittedAt, since) : undefined, source ? eq(schema.responses.campaignId, source) : undefined))
-    .orderBy(desc(schema.responses.submittedAt)).limit(50))
-  const href = (next: { filter?: string; source?: string }) => {
-    const params = new URLSearchParams()
-    const f = next.filter ?? filter; const s = next.source ?? source
-    if (f !== 'all') params.set('filter', f)
-    if (s) params.set('source', s)
-    const qs = params.toString()
-    return qs ? `/app?${qs}` : '/app'
-  }
-
-  return (
-    <div className="grid gap-4">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <p className="text-sm text-[var(--muted)]">Messages and responses through your personal QR only.</p>
-        <form action="/app" className="flex items-center gap-2">
-          {filter !== 'all' && <input type="hidden" name="filter" value={filter} />}
-          <label htmlFor="source" className="sr-only">Filter by Mode</label>
-          <select id="source" name="source" defaultValue={source} className="field-select !min-h-10 !w-auto text-sm"><option value="">All Modes</option>{campaigns.map((c) => <option key={c.id} value={c.id}>{c.name} · {modeName(c.mode)}</option>)}</select>
-          <button className="action-secondary !min-h-10">Filter</button>
-        </form>
-      </div>
-      <nav aria-label="Filter responses" className="flex gap-2">
-        {([['all', 'All'], ['unread', 'Unread'], ['archived', 'Archived']] as const).map(([key, label]) => <Link key={key} href={href({ filter: key })} aria-current={filter === key ? 'page' : undefined} className={`rounded-lg border px-3.5 py-1.5 text-sm font-bold ${filter === key ? 'border-[var(--accent)] bg-[var(--accent)] text-[var(--on-accent)]' : 'border-[var(--line)] bg-[var(--surface-strong)] text-[var(--muted)] hover:text-[var(--ink)]'}`}>{label}</Link>)}
-      </nav>
-      <div className="soft-card overflow-hidden">
-        {items.length === 0 ? (
-          <div className="grid min-h-56 place-items-center p-8 text-center"><div><span className="mx-auto grid h-12 w-12 place-items-center rounded-xl bg-[var(--accent-soft)] text-[var(--accent)]"><ChatCircleDots size={24} /></span><h3 className="mt-4 font-extrabold">{filter === 'archived' ? 'Nothing archived' : filter === 'unread' ? 'You are all caught up' : 'Your first response will land here'}</h3><p className="mt-2 max-w-sm text-sm leading-6 text-[var(--muted)]">{filter === 'archived' ? 'Responses you archive are kept here.' : filter === 'unread' ? 'New responses will appear here.' : 'Show your QR, then come back here to read ratings and private messages.'}</p></div></div>
-        ) : (
-          <ul className="divide-y divide-[var(--line)]">
-            {items.map(({ response, campaignName, mode }) => {
-              const answers = Object.values(response.answers as Record<string, unknown>).map(answerText).filter(Boolean)
-              return (
-                <li key={response.id} className="grid gap-3 p-4 sm:grid-cols-[auto_1fr_auto] sm:items-start sm:p-5">
-                  <span aria-hidden="true" className="hidden h-10 w-10 place-items-center rounded-xl bg-[var(--surface-muted)] text-[var(--accent)] sm:grid"><ChatCircleDots size={20} /></span>
-                  <div className="min-w-0">
-                    <div className="flex flex-wrap items-center gap-2"><h3 className="font-extrabold">{campaignName ?? 'Deleted Mode'}</h3>{!response.readAt && <span className="status-live">New</span>}{response.flagged && <span className="status-draft">Reported</span>}{response.blocked && <span className="status-draft">Sender blocked</span>}</div>
-                    <div className="mt-1.5 grid gap-1">{answers.length ? answers.map((answer, index) => <p key={`${response.id}-${index}`} className="text-sm leading-6 text-[var(--muted)]">{answer}</p>) : <p className="text-sm text-[var(--muted)]">No written answer</p>}</div>
-                    <p className="mt-2 text-xs text-[var(--muted)]">{mode ? modeName(mode) : 'Mode'} · Personal ScanMe · <time dateTime={response.submittedAt.toISOString()}>{response.submittedAt.toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Europe/London' })}</time></p>
-                  </div>
-                  {filter !== 'archived' && <div className="flex flex-wrap gap-2">{!response.readAt && <form action={markResponseRead}><input type="hidden" name="responseId" value={response.id} /><button className="action-secondary !min-h-10 text-sm"><Check size={17} />Mark read</button></form>}<form action={archiveResponse}><input type="hidden" name="responseId" value={response.id} /><button className="action-secondary !min-h-10 text-sm"><Archive size={17} />Archive</button></form>{!response.flagged && <form action={reportResponse}><input type="hidden" name="responseId" value={response.id} /><button className="action-quiet !min-h-10 text-sm" title="Report this response as abusive"><Flag size={17} />Report</button></form>}<ConfirmForm action={blockSender} tone="danger" title="Block this sender?" message="Further responses from this device or network will be refused. This can also affect other people on the same shared network. The response is archived." confirmLabel="Block sender" triggerLabel={<><Prohibit size={17} />Block</>} triggerClassName="action-quiet !min-h-10 text-sm"><input type="hidden" name="responseId" value={response.id} /></ConfirmForm></div>}
-                </li>
-              )
-            })}
-          </ul>
-        )}
-      </div>
-      {since && <p className="text-xs text-[var(--muted)]">The free plan shows responses from the last 30 days.</p>}
-    </div>
-  )
+function EmptyInbox({ filter }: { filter: InboxFilter }) {
+  const copy = {
+    all: ['Your first response will land here', 'Show your QR, then come back here to read ratings and private messages.'],
+    unread: ['You are all caught up', 'New responses will appear here.'],
+    archived: ['Nothing archived', 'Responses you archive are kept here. You can move them back any time.'],
+    blocked: ['Nobody is blocked', 'If you block a visitor, their responses are kept here and you can unblock them.'],
+  }[filter]
+  return <div className="grid min-h-56 place-items-center p-8 text-center"><div><span className="mx-auto grid h-12 w-12 place-items-center rounded-xl bg-[var(--accent-soft)] text-[var(--accent)]"><ChatCircleDots size={24} /></span><h3 className="mt-4 font-extrabold">{copy[0]}</h3><p className="mt-2 max-w-sm text-sm leading-6 text-[var(--muted)]">{copy[1]}</p></div></div>
 }
 
 function Analytics({ days, visits, responses, clicks }: { days: Array<{ key: string; label: string; count: number }>; visits: number; responses: number; clicks: number }) {

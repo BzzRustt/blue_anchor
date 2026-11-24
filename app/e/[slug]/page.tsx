@@ -4,6 +4,8 @@ import { ArrowRight } from '@phosphor-icons/react/dist/ssr'
 import { eq, sql } from 'drizzle-orm'
 import { headers } from 'next/headers'
 import { linkAccount, savePreferences } from '@/app/e/[slug]/actions'
+import { unblockAttendee } from '@/app/e/[slug]/network-actions'
+import { NetworkNotice } from '@/components/NetworkNotice'
 import { AttendeeNav } from '@/components/AttendeeNav'
 import { AttendeeRecoveryForm } from '@/components/AttendeeRecoveryForm'
 import { BadgePlate } from '@/components/BadgePlate'
@@ -20,7 +22,7 @@ export const metadata: Metadata = { title: 'Event', robots: { index: false, foll
 const notice = 'rounded-xl border p-3 text-sm'
 
 /** The permanent event link: what goes on the poster and the welcome slide. */
-export default async function EventPage({ params, searchParams }: { params: Promise<{ slug: string }>; searchParams: Promise<{ left?: string; access?: string; prefs?: string; linked?: string }> }) {
+export default async function EventPage({ params, searchParams }: { params: Promise<{ slug: string }>; searchParams: Promise<{ left?: string; access?: string; prefs?: string; linked?: string; ok?: string; e?: string }> }) {
   const { slug } = await params
   const query = await searchParams
   const ctx = await getJoinContext(slug)
@@ -34,7 +36,9 @@ export default async function EventPage({ params, searchParams }: { params: Prom
         .select({ visibility: schema.eventAttendees.profileVisibility, allowMessages: schema.eventAttendees.allowMessages, notifyEmail: schema.eventAttendees.notifyEmail })
         .from(schema.eventAttendees).where(eq(schema.eventAttendees.id, card.id)).limit(1))
     : []
-  const unread = live ? await unreadCount(card.id) : 0
+  const [unread, blocked] = live
+    ? await Promise.all([unreadCount(card.id), withAttendeeDb(card.id, async (tx) => rowsOf<{ id: string; display_name: string; tag: string }>(await tx.execute(sql`select * from attendee_my_blocks()`))).catch(() => [])])
+    : [0, []]
   // Signed in to ScanMe as well? Offer to keep this card on the account (M8).
   const account = live ? await auth.api.getSession({ headers: await headers() }).catch(() => null) : null
   const linked = account
@@ -46,10 +50,11 @@ export default async function EventPage({ params, searchParams }: { params: Prom
     <EventShell eyebrow="Event" title={ctx.name} subtitle={[formatWhen(ctx.startsAt), ctx.venue].filter(Boolean).join(' · ')}>
       {live && <AttendeeNav slug={slug} active="event" unread={unread} />}
       <div className="grid gap-4">
+        <NetworkNotice ok={query.ok} e={query.e} />
         {query.left && <p role="status" className={`${notice} border-[var(--line)] bg-[var(--surface)] text-[var(--muted)]`}>Your card has been removed.</p>}
         {query.access === 'ok' && <p role="status" className={`${notice} border-[var(--accent)] bg-[var(--accent-soft)] font-bold text-[var(--accent-strong)]`}>You are signed in to your event card on this device.</p>}
         {query.access === 'invalid' && <p role="alert" className={`${notice} border-[var(--line)] bg-[var(--surface)]`}>That link is not valid any more. Ask for a new one below or from the organiser.</p>}
-        {query.linked && <p role="status" className={`${notice} border-[var(--accent)] bg-[var(--accent-soft)] font-bold text-[var(--accent-strong)]`}>{linked ? 'This card is kept on your ScanMe account. Find it under Events, Attending.' : 'We could not link this card. It may already be linked to another account.'}</p>}
+        {query.linked && <p role="status" className={`${notice} border-[var(--accent)] bg-[var(--accent-soft)] font-bold text-[var(--accent-strong)]`}>{linked ? 'Added to your ScanMe account. Find it under Events, Attending, including a read-only copy of your conversations after the event.' :'We could not link this card. It may already be linked to another account.'}</p>}
         {query.prefs && <p role="status" className={`${notice} border-[var(--accent)] bg-[var(--accent-soft)] font-bold text-[var(--accent-strong)]`}>Preferences saved.</p>}
 
         {live && <BadgePlate tag={card.tag} name={card.displayName === 'Walk-up' ? undefined : card.displayName} label="Your tag" />}
@@ -57,9 +62,17 @@ export default async function EventPage({ params, searchParams }: { params: Prom
         <Link href={`/e/${slug}/join`} className="action-primary w-full justify-center">{card ? 'Edit my card' : 'Set up my event profile'}<ArrowRight size={18} weight="bold" /></Link>
         {card && card.status === 'complete' && <Link href={`/e/${slug}/a/${card.id}`} className="action-secondary w-full justify-center">See my card as others do</Link>}
 
-        {live && !linked && (account
-          ? <form action={linkAccount}><input type="hidden" name="slug" value={slug} /><button className="action-secondary w-full justify-center">Keep this card on my ScanMe account</button></form>
-          : <p className="text-sm leading-6 text-[var(--muted)]">Want your own permanent code, and to find this event again later? <Link className="font-bold text-[var(--accent-strong)] underline" href={`/signup?next=${encodeURIComponent(`/e/${slug}`)}`}>Create a free ScanMe account</Link>. Your event card stays separate.</p>)}
+        {live && (
+          <section id="keep" className="grid gap-3 rounded-[22px] border border-[var(--accent)] bg-[var(--accent-soft)] p-5">
+            <h2 className="font-extrabold">{linked ? 'Kept on your ScanMe account' : 'Keep your conversations after the event'}</h2>
+            {linked
+              ? <p className="text-sm leading-6 text-[var(--muted)]">This event is under Events, Attending in your account. After messages close you can still read your conversations there (read-only).</p>
+              : <p className="text-sm leading-6 text-[var(--muted)]">Messages close 48 hours after the event ends. Add this event to a free ScanMe account to keep a read-only copy of your conversations, and get your own permanent code. Your event card stays separate.</p>}
+            {!linked && (account
+              ? <form action={linkAccount}><input type="hidden" name="slug" value={slug} /><button className="action-primary w-full justify-center">Add this event to my ScanMe account</button></form>
+              : <div className="grid gap-2 sm:grid-cols-2"><Link className="action-primary w-full justify-center" href={`/signup?next=${encodeURIComponent(`/e/${slug}#keep`)}`}>Create a free account</Link><Link className="action-secondary w-full justify-center" href={`/login?next=${encodeURIComponent(`/e/${slug}#keep`)}`}>I have an account</Link></div>)}
+          </section>
+        )}
         {card && prefs && (
           <form action={savePreferences} className="grid gap-3 rounded-[22px] border border-[var(--line)] bg-[var(--surface)] p-5">
             <input type="hidden" name="slug" value={slug} />
@@ -74,6 +87,20 @@ export default async function EventPage({ params, searchParams }: { params: Prom
             <label className="flex items-center gap-2 text-sm"><input type="checkbox" name="notifyEmail" defaultChecked={prefs.notifyEmail} />Email me about requests <span className="text-[var(--muted)]">(never the message itself)</span></label>
             <button className="action-secondary w-full justify-center">Save preferences</button>
           </form>
+        )}
+        {blocked.length > 0 && (
+          <section className="grid gap-2 rounded-[22px] border border-[var(--line)] bg-[var(--surface)] p-5">
+            <h2 className="font-extrabold">People you blocked</h2>
+            <p className="text-sm text-[var(--muted)]">You don’t see each other in search or on cards, and can’t message each other.</p>
+            <ul className="grid gap-2">
+              {blocked.map((b) => (
+                <li key={b.id} className="flex items-center justify-between gap-3 rounded-xl border border-[var(--line)] p-3 text-sm">
+                  <span><strong>{b.display_name}</strong> <span className="font-mono text-xs text-[var(--muted)]">{b.tag}</span></span>
+                  <form action={unblockAttendee}><input type="hidden" name="slug" value={slug} /><input type="hidden" name="back" value={`/e/${slug}`} /><input type="hidden" name="target" value={b.id} /><button className="action-quiet !min-h-9 text-sm">Unblock</button></form>
+                </li>
+              ))}
+            </ul>
+          </section>
         )}
 
         {!card && (

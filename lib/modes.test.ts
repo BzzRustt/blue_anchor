@@ -16,7 +16,8 @@ test('five modes, three free and two Pro', () => {
 test('parseModeConfig is total: garbage in, bounded defaults out', () => {
   for (const raw of [null, undefined, 'x', 42, [], { show: 'no', question: 7, creator: { links: 'no' } }]) {
     const cfg = parseModeConfig('basic', raw)
-    assert.equal(cfg.question.prompt, 'Rate my drip from 1 to 5')
+    assert.equal(cfg.question.prompt, 'What’s on your mind today?')
+    assert.equal(cfg.question.type, 'open_text')
     assert.equal(cfg.creator.links.length, 0)
   }
 })
@@ -64,11 +65,13 @@ test('instagram handle cannot smuggle a path', () => {
   assert.equal(links.find((l) => l.key === 'instagram'), undefined)
 })
 
-test('blocks: basic asks a rating and an optional message', () => {
+test('blocks: a new basic Mode asks an open question and an optional message', () => {
   const blocks = buildBlocks('basic', defaultConfig('basic'))
-  assert.deepEqual(blocks.map((b) => b.type), ['scale', 'open_text'])
-  assert.equal(blocks[0].config.max, 5)
+  assert.deepEqual(blocks.map((b) => b.type), ['open_text', 'open_text'])
+  assert.equal(blocks[0].config.prompt, 'What’s on your mind today?')
   assert.equal(blocks[1].required, false)
+  // A saved rating question is kept as a rating.
+  assert.equal(buildBlocks('basic', parseModeConfig('basic', { question: { on: true, type: 'scale', prompt: 'Rate me', max: 5 } }))[0].config.max, 5)
 })
 
 test('blocks: networking is a controlled introduction, not open chat', () => {

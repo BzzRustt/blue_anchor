@@ -62,7 +62,7 @@ GRANT SELECT ON codes, campaigns, question_blocks TO visitor_user;
 GRANT SELECT (id, name, image, bio, role, company, instagram, linkedin, website,
   tiktok, youtube, spotify, portfolio_url, interests, looking_for, can_offer)
   ON users TO visitor_user;
-GRANT SELECT (id, user_id, device_hash) ON blocked_devices TO visitor_user;
+GRANT SELECT (id, user_id, device_hash, session_token, created_at) ON blocked_devices TO visitor_user;
 GRANT SELECT (id, code_id, session_token, submitted_at) ON responses TO visitor_user;
 GRANT INSERT (code_id, campaign_id, session_token, ip_hash) ON scans TO visitor_user;
 GRANT INSERT (code_id, campaign_id, target, session_token) ON link_clicks TO visitor_user;
@@ -567,7 +567,7 @@ SET search_path = public
 AS $$
   SELECT e.id, e.campaign_id, e.name, e.venue, e.starts_at, e.ends_at,
          e.directory_expires_at, e.role_set, u.plan::text,
-         (SELECT count(*)::integer FROM event_attendees a WHERE a.event_id = e.id),
+         (SELECT count(*)::integer FROM event_attendees a WHERE a.event_id = e.id AND a.status <> 'withdrawn'),
          e.capacity
   FROM codes c
   JOIN events e ON e.code_id = c.id
@@ -1328,3 +1328,233 @@ GRANT SELECT, INSERT, DELETE ON shop_interests TO app_user;
 DROP POLICY IF EXISTS shop_interests_own ON shop_interests;
 CREATE POLICY shop_interests_own ON shop_interests TO app_user
   USING (user_id = auth.user_id()) WITH CHECK (user_id = auth.user_id());
+
+-- ==========================================================================
+-- 2026-11-24 demo feedback (migration 0007).
+-- ==========================================================================
+
+-- Join attempts are written only by register_attendee below; organisers may read their own.
+ALTER TABLE join_attempts ENABLE ROW LEVEL SECURITY;
+ALTER TABLE join_attempts FORCE ROW LEVEL SECURITY;
+GRANT SELECT ON join_attempts TO app_user;
+DROP POLICY IF EXISTS join_attempts_organiser ON join_attempts;
+CREATE POLICY join_attempts_organiser ON join_attempts FOR SELECT TO app_user
+  USING (EXISTS (SELECT 1 FROM events e WHERE e.id = join_attempts.event_id AND e.user_id = auth.user_id()));
+
+-- Profile photos: the owner manages their own; visitors can load one only while its owner's
+-- personal code is live (the same rule as every other public profile field).
+ALTER TABLE user_photos ENABLE ROW LEVEL SECURITY;
+ALTER TABLE user_photos FORCE ROW LEVEL SECURITY;
+GRANT SELECT, INSERT, UPDATE, DELETE ON user_photos TO app_user;
+GRANT SELECT (user_id, mime, bytes, updated_at) ON user_photos TO visitor_user;
+DROP POLICY IF EXISTS user_photos_owner ON user_photos;
+CREATE POLICY user_photos_owner ON user_photos TO app_user
+  USING (user_id = auth.user_id()) WITH CHECK (user_id = auth.user_id());
+DROP POLICY IF EXISTS user_photos_public ON user_photos;
+CREATE POLICY user_photos_public ON user_photos FOR SELECT TO visitor_user
+  USING (EXISTS (SELECT 1 FROM codes c WHERE c.user_id = user_photos.user_id AND c.kind = 'personal' AND c.is_live));
+
+-- Self-registration v2: email required, a per-network limit of 30 joins an hour per event, and
+-- withdrawn (removed) attendees no longer count against capacity. The 5-argument version above
+-- stays for the older live code until it is released.
+CREATE OR REPLACE FUNCTION public.register_attendee(
+  p_event_id uuid,
+  p_name text,
+  p_role_letter text,
+  p_answers jsonb,
+  p_max_attendees integer,
+  p_email text,
+  p_ip_hash text
+)
+RETURNS TABLE (attendee_id uuid, attendee_tag text)
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_name text := btrim(coalesce(p_name, ''));
+  v_email text := lower(btrim(coalesce(p_email, '')));
+  v_letter text := nullif(upper(btrim(coalesce(p_role_letter, ''))), '');
+  v_answers jsonb := coalesce(p_answers, '{}'::jsonb);
+  v_roles jsonb;
+  v_next integer;
+  v_tag text;
+  v_id uuid;
+BEGIN
+  IF NOT public.event_directory_open(p_event_id) THEN RAISE EXCEPTION 'event_closed'; END IF;
+  IF length(v_name) < 2 OR length(v_name) > 80 THEN RAISE EXCEPTION 'invalid_name'; END IF;
+  IF length(v_email) > 200 OR v_email !~ '^[^@[:space:]]+@[^@[:space:]]+[.][^@[:space:]]+$' THEN RAISE EXCEPTION 'invalid_email'; END IF;
+  IF p_max_attendees IS NULL OR p_max_attendees < 1 THEN RAISE EXCEPTION 'invalid_cap'; END IF;
+  IF jsonb_typeof(v_answers) <> 'object' OR length(v_answers::text) > 8000 THEN RAISE EXCEPTION 'invalid_answers'; END IF;
+  IF coalesce(p_ip_hash, '') = '' THEN RAISE EXCEPTION 'invalid_request'; END IF;
+
+  SELECT e.role_set INTO v_roles FROM events e WHERE e.id = p_event_id;
+  IF jsonb_typeof(v_roles) = 'array' AND jsonb_array_length(v_roles) > 0 THEN
+    IF v_letter IS NULL OR NOT EXISTS (SELECT 1 FROM jsonb_array_elements(v_roles) r WHERE r ->> 'letter' = v_letter) THEN
+      RAISE EXCEPTION 'invalid_role';
+    END IF;
+  ELSIF v_letter IS NOT NULL THEN
+    RAISE EXCEPTION 'invalid_role';
+  END IF;
+
+  PERFORM pg_advisory_xact_lock(hashtextextended(p_event_id::text, 0));
+
+  IF (SELECT count(*) FROM join_attempts j WHERE j.event_id = p_event_id AND j.ip_hash = p_ip_hash
+      AND j.created_at > now() - interval '1 hour') >= 30 THEN
+    RAISE EXCEPTION 'rate_limited';
+  END IF;
+  IF (SELECT count(*) FROM event_attendees a WHERE a.event_id = p_event_id AND a.status <> 'withdrawn') >= p_max_attendees THEN
+    RAISE EXCEPTION 'event_full';
+  END IF;
+
+  SELECT coalesce(max((regexp_match(a.tag, '([0-9]+)$'))[1]::integer), 0) + 1 INTO v_next
+  FROM event_attendees a WHERE a.event_id = p_event_id AND a.role_letter IS NOT DISTINCT FROM v_letter;
+  v_tag := CASE WHEN v_next < 1000 THEN lpad(v_next::text, 3, '0') ELSE v_next::text END;
+  IF v_letter IS NOT NULL THEN v_tag := v_letter || '-' || v_tag; END IF;
+
+  INSERT INTO event_attendees (event_id, tag, role_letter, display_name, email, answers, source, status)
+  VALUES (p_event_id, v_tag, v_letter, v_name, v_email, v_answers, 'native', 'complete')
+  RETURNING id INTO v_id;
+  INSERT INTO join_attempts (event_id, ip_hash) VALUES (p_event_id, p_ip_hash);
+
+  attendee_id := v_id;
+  attendee_tag := v_tag;
+  RETURN NEXT;
+END;
+$$;
+REVOKE ALL ON FUNCTION public.register_attendee(uuid, text, text, jsonb, integer, text, text) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.register_attendee(uuid, text, text, jsonb, integer, text, text) TO visitor_user;
+
+-- A personal link for the attendee proven by this browser, shown to them right after joining (and
+-- emailed once email is set up). Only their own: a shared group email never reveals other links.
+-- The app makes the token and passes only its sha256, like issueAccessLink.
+CREATE OR REPLACE FUNCTION public.attendee_add_own_link(p_hash text)
+RETURNS boolean
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE v_me event_attendees := public.me_attendee(false);
+BEGIN
+  IF coalesce(p_hash, '') !~ '^[0-9a-f]{64}$' THEN RETURN false; END IF;
+  INSERT INTO attendee_access_tokens (attendee_id, event_id, token_hash, created_by, expires_at)
+  SELECT v_me.id, v_me.event_id, p_hash, 'email', e.directory_expires_at FROM events e WHERE e.id = v_me.event_id;
+  RETURN FOUND;
+END;
+$$;
+REVOKE ALL ON FUNCTION public.attendee_add_own_link(text) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.attendee_add_own_link(text) TO visitor_user;
+
+-- Full directory with a search box: matches the name or any answer on a full card (name-only
+-- cards match by name only, so a search never reveals what a name-only card hides).
+CREATE OR REPLACE FUNCTION public.attendee_directory(p_q text)
+RETURNS TABLE (id uuid, tag text, role_letter text, display_name text, answers jsonb, visibility text, allow_messages boolean)
+LANGUAGE plpgsql
+STABLE
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_me event_attendees := public.me_attendee(false);
+  v_net record;
+  v_q text := left(btrim(coalesce(p_q, '')), 60);
+BEGIN
+  SELECT * INTO v_net FROM public.event_networking(v_me.event_id);
+  IF v_net.discovery <> 'directory' OR v_net.state NOT IN ('live', 'follow_up') THEN RAISE EXCEPTION 'not_open'; END IF;
+  RETURN QUERY
+    SELECT a.id, a.tag, a.role_letter, a.display_name,
+           CASE WHEN a.profile_visibility = 'full' THEN a.answers ELSE '{}'::jsonb END,
+           a.profile_visibility, a.allow_messages
+    FROM event_attendees a
+    WHERE a.event_id = v_me.event_id AND a.status = 'complete' AND a.profile_visibility <> 'hidden'
+      AND a.id <> v_me.id AND NOT public.attendees_blocked(v_me.id, a.id)
+      AND (v_q = '' OR strpos(lower(a.display_name), lower(v_q)) > 0
+           OR (a.profile_visibility = 'full' AND EXISTS (SELECT 1 FROM jsonb_each_text(a.answers) e WHERE strpos(lower(e.value), lower(v_q)) > 0)))
+    ORDER BY a.tag LIMIT 1000;
+END;
+$$;
+REVOKE ALL ON FUNCTION public.attendee_directory(text) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.attendee_directory(text) TO visitor_user;
+
+-- May the current viewer open this card? False when either has blocked the other. A viewer who
+-- is not an attendee (someone scanning a badge) is never blocked.
+CREATE OR REPLACE FUNCTION public.attendee_can_view(p_target uuid)
+RETURNS boolean
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT public.current_attendee_id() IS NULL OR NOT public.attendees_blocked(public.current_attendee_id(), p_target);
+$$;
+REVOKE ALL ON FUNCTION public.attendee_can_view(uuid) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.attendee_can_view(uuid) TO visitor_user;
+
+-- People I have blocked at this event, so I can unblock them from Preferences.
+CREATE OR REPLACE FUNCTION public.attendee_my_blocks()
+RETURNS TABLE (id uuid, display_name text, tag text)
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT a.id, a.display_name, a.tag FROM attendee_blocks b JOIN event_attendees a ON a.id = b.blocked_attendee_id
+  WHERE b.blocker_attendee_id = public.current_attendee_id() ORDER BY b.created_at DESC;
+$$;
+REVOKE ALL ON FUNCTION public.attendee_my_blocks() FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.attendee_my_blocks() TO visitor_user;
+
+-- Unblock: they can find me again. Earlier requests stay closed (old threads don't reopen).
+CREATE OR REPLACE FUNCTION public.attendee_unblock(p_other uuid)
+RETURNS boolean
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+BEGIN
+  DELETE FROM attendee_blocks WHERE blocker_attendee_id = public.current_attendee_id() AND blocked_attendee_id = p_other;
+  RETURN FOUND;
+END;
+$$;
+REVOKE ALL ON FUNCTION public.attendee_unblock(uuid) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.attendee_unblock(uuid) TO visitor_user;
+
+-- Read-only copies of my accepted conversations at an event, for a ScanMe account linked to my
+-- attendee card. Available after the event closes, until the data is deleted under the
+-- retention period. (Owner's decision 2026-11-24, ahead of the legal review: see the ledger.)
+CREATE OR REPLACE FUNCTION public.my_kept_conversations(p_event uuid)
+RETURNS TABLE (request_id uuid, other_name text, other_tag text, messages json)
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT r.id, o.display_name, o.tag,
+         (SELECT coalesce(json_agg(json_build_object('mine', m.from_attendee_id = me.id, 'body', m.body, 'at', m.created_at) ORDER BY m.created_at), '[]'::json)
+          FROM event_messages m WHERE m.request_id = r.id)
+  FROM event_attendees me
+  JOIN message_requests r ON me.id IN (r.from_attendee_id, r.to_attendee_id) AND r.status = 'accepted'
+  JOIN event_attendees o ON o.id = CASE WHEN r.from_attendee_id = me.id THEN r.to_attendee_id ELSE r.from_attendee_id END
+  WHERE me.claimed_user_id = auth.user_id() AND me.event_id = p_event
+  ORDER BY r.created_at;
+$$;
+REVOKE ALL ON FUNCTION public.my_kept_conversations(uuid) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.my_kept_conversations(uuid) TO app_user;
+
+-- Nickname links (/@name): the personal code for a nickname, but never while the owner's live
+-- Mode is Incognito, so a nickname can't reveal whose anonymous page it is.
+CREATE OR REPLACE FUNCTION public.code_for_handle(p_handle text)
+RETURNS text
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT c.slug FROM users u
+  JOIN codes c ON c.user_id = u.id AND c.kind = 'personal' AND c.is_live
+  JOIN campaigns ca ON ca.code_id = c.id AND ca.status = 'live' AND ca.mode <> 'incognito'
+  WHERE lower(u.handle) = lower(btrim(coalesce(p_handle, '')))
+  LIMIT 1;
+$$;
+REVOKE ALL ON FUNCTION public.code_for_handle(text) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.code_for_handle(text) TO visitor_user;
