@@ -765,6 +765,33 @@ END;
 $$;
 REVOKE ALL ON FUNCTION public.confirm_event_purchase(text) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION public.confirm_event_purchase(text) TO visitor_user;
+-- Overload that also matches the purchase by its own id (Stripe's client_reference_id), so a webhook that
+-- arrives before the app has saved stripe_session_id still publishes the event. Idempotent like the original.
+-- The 1-argument function above is left in place (the webhook falls back to it until this is applied).
+CREATE OR REPLACE FUNCTION public.confirm_event_purchase(p_session text, p_ref text)
+RETURNS uuid
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_purchase event_purchases%ROWTYPE;
+  v_id uuid;
+BEGIN
+  -- Only cast when it really is a uuid; anything else just never matches by id.
+  IF p_ref ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' THEN v_id := p_ref::uuid; END IF;
+  UPDATE event_purchases SET status = 'paid', paid_at = now()
+   WHERE (stripe_session_id = p_session OR id = v_id) AND status = 'pending'
+   RETURNING * INTO v_purchase;
+  IF NOT FOUND THEN RETURN NULL; END IF;
+  UPDATE events SET status = 'published', capacity = greatest(coalesce(capacity, 0), v_purchase.capacity),
+         published_at = coalesce(published_at, now()), updated_at = now()
+   WHERE id = v_purchase.event_id AND status IN ('draft','awaiting_payment','published');
+  RETURN v_purchase.event_id;
+END;
+$$;
+REVOKE ALL ON FUNCTION public.confirm_event_purchase(text, text) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.confirm_event_purchase(text, text) TO visitor_user;
 
 -- --------------------------------------------------------------------------
 -- M5: attendee access. The badge QR is NOT a login. An attendee's own access comes from
