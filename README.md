@@ -52,6 +52,14 @@ Set the webhook endpoint's API version in the Stripe dashboard to match `STRIPE_
 
 Sandbox test steps (no real money; names of env vars only, values are yours): switch Stripe to a Sandbox/Test mode, create a test product and monthly price, set `STRIPE_SECRET_KEY` (test key), `STRIPE_PRO_PRICE_ID` and `STRIPE_WEBHOOK_SECRET` in `.env.local`, run `stripe listen --forward-to localhost:3000/api/stripe/webhook` and `npm run dev`. Check the local app is not pointed at your real database first; use a throwaway demo account. Cases: Pro upgrade with 4242 4242 4242 4242 (plan becomes Pro); cancel in the billing portal (back to Free); a declined renewal with 4000 0000 0000 0341 (use a Stripe test clock; Pro kept while retrying); 3-D Secure with 4000 0025 0000 3155; an event purchase with 4242 (event published); `stripe trigger checkout.session.async_payment_succeeded` and `stripe trigger invoice.payment_failed` should answer 200. Stripe dashboard labels may have changed; see Stripe's docs.
 
+### Local sandbox test checklist
+
+1. Make a separate Neon dev branch/database and put ITS URLs in `.env.local` (all five `DATABASE_*` names). Never test against the production database.
+2. `npm run stripe:check` (add `-- --init` to append any missing Stripe placeholder lines). It never prints values; it shows a masked database host to compare with production in Neon, and refuses a live key.
+3. In Stripe test mode: copy the `sk_test_` key, create a monthly test price (`price_...`), and save a Customer Portal configuration (Settings > Billing > Customer portal, while in test mode). Without it the Manage billing button fails and the app shows the generic payments error.
+4. Fill the placeholders yourself, keep `NEXT_PUBLIC_APP_URL=http://localhost:3000` (it builds the success and cancel links), then `stripe login`, `stripe listen --forward-to localhost:3000/api/stripe/webhook` (paste its `whsec_...`), and `npm run dev`.
+5. Sign up a throwaway account and run the cases above. Confirm Pro on `/app/profile` (the plan label shows Pro or Free).
+
 ## Verification
 
 ```bash

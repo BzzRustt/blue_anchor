@@ -10,6 +10,7 @@
     "lint": "eslint .",
     "test": "node --test",
     "db:generate": "drizzle-kit generate",
+    "stripe:check": "node scripts/stripe-sandbox-check.mjs",
     "db:push": "drizzle-kit push && node scripts/apply-rls.mjs",
     "db:migrate": "drizzle-kit migrate",
     "db:rls": "node scripts/apply-rls.mjs",
