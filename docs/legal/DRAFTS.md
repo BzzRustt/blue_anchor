@@ -29,11 +29,14 @@ Open decisions this depends on:
 | Visit and link-click counts, a hashed visitor device id | Visitors | Your analytics; stop spam | Legitimate interests |
 | Attendee name, optional email, event card answers, tag number, check-in time | Attendees, or the organiser who registers them | Run the event | Organiser is controller; ScanMe is processor (see DPA) |
 | Saved people, message requests and messages between attendees | Attendees | Event networking | Contract with the attendee [to confirm] |
+| A read-only copy of your event conversations, kept on your ScanMe account if you link your event card to it | Attendees who choose to link | So you can look back at who you met | Contract with the attendee [to confirm] |
 | Search log (who looked up which badge number, and misses) | Attendees | Stop badge numbers being harvested | Legitimate interests |
 | Abuse reports | Attendees | Safety | Legitimate interests / legal obligation |
 | Payment records (amount, package, Stripe session id). Card details never reach us. | Organisers | Take payment, accounting | Contract, legal obligation |
 
 **Who sees what.** Organisers never see attendee messages, saved lists or reports. Attendees choose whether their card is shown in full, name only, or hidden. Visitors never see an account holder's email unless a Mode shows it.
+
+**Keeping your event conversations.** Event messages stop working 48 hours after the event ends. If you link your event card to a ScanMe account, you can still read your own conversations from that event, read-only, from your account. Only you can see them; the organiser and other attendees cannot see your copy. You cannot send new messages. They are deleted when the retention period ends [D5] [confirm whether deleting your account also removes them earlier]. If you do not link a ScanMe account, your messages are deleted with the rest of the event data. [Draft, decided before legal review: to be reviewed.]
 
 **Processors.** Neon (database, [region]), Netlify (hosting), Resend (email), Stripe (payments), Google (only if you choose Google sign-in).
 
@@ -73,6 +76,7 @@ No advertising or analytics cookies, so no consent banner is needed [confirm wit
 | Account and profile | Account deletion |
 | Personal responses | Free plan: shown for 30 days, kept [decide]; Pro: [decide] |
 | Event attendee data, messages, saved lists, search log | Access closes 48h after the end; deleted [D5] days later |
+| Read-only copy of event conversations on a linked ScanMe account | Retention period [D5] ends, or the account is deleted |
 | Abuse reports | [decide, e.g. 12 months] |
 | Payment records | [6 years] |
 | Audit log (organiser actions) | Same as the event |
