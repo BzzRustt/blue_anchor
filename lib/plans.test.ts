@@ -16,6 +16,7 @@ import {
   canExportEventReport,
   canGoLive,
   canReply,
+  canUsePhotoQr,
   canUseRoleLetters,
   directoryExpiresAt,
   eventActivityLimit,
@@ -177,4 +178,12 @@ test('Pro Modes need Pro; free Modes are open to everyone', () => {
     assert.equal(canActivateMode('pro', mode).ok, true)
     assert.equal(canActivateMode('studio', mode).ok, true)
   }
+})
+
+test('Photo QR download needs pro; classic QR is not gated here', () => {
+  const free = canUsePhotoQr('free')
+  assert.equal(free.ok, false)
+  assert.equal(!free.ok && free.upgradeTo, 'pro')
+  assert.equal(canUsePhotoQr('pro').ok, true)
+  assert.equal(canUsePhotoQr('studio').ok, true)
 })

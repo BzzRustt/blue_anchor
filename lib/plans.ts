@@ -72,6 +72,9 @@ export interface PlanLimits {
   eventReportExport: boolean
   /** Organiser-defined role letters (F/I/M/…) rather than plain numbers. */
   eventRoleLetters: boolean
+
+  /** Download a Photo-style QR from QR Studio. Classic download and validation stay free. */
+  photoQr: boolean
 }
 
 export const PLAN_LIMITS: Record<Plan, PlanLimits> = {
@@ -97,6 +100,7 @@ export const PLAN_LIMITS: Record<Plan, PlanLimits> = {
     attendeesPerEvent: 50,
     eventReportExport: false,
     eventRoleLetters: false,
+    photoQr: false,
   },
   pro: {
     codes: 3,
@@ -120,6 +124,7 @@ export const PLAN_LIMITS: Record<Plan, PlanLimits> = {
     attendeesPerEvent: 150,
     eventReportExport: true,
     eventRoleLetters: true,
+    photoQr: true,
   },
   studio: {
     codes: 25,
@@ -143,6 +148,7 @@ export const PLAN_LIMITS: Record<Plan, PlanLimits> = {
     attendeesPerEvent: 500,
     eventReportExport: true,
     eventRoleLetters: true,
+    photoQr: true,
   },
 }
 
@@ -222,6 +228,10 @@ export function canCreateCode(plan: Plan, currentCodeCount: number): Gate {
 
 export function canReply(plan: Plan): Gate {
   return planLimits(plan).reply ? allow : deny('Replying needs the pro plan.', 'pro')
+}
+
+export function canUsePhotoQr(plan: Plan): Gate {
+  return planLimits(plan).photoQr ? allow : deny('Photo QR needs the pro plan.', 'pro')
 }
 
 export function canAddSocialLink(plan: Plan, currentCount: number): Gate {

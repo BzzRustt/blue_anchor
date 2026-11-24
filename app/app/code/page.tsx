@@ -3,6 +3,7 @@ import { ArrowLeft, Lock, Warning } from '@phosphor-icons/react/dist/ssr'
 import { QrStudio } from '@/components/qr-studio/QrStudio'
 import { appBaseUrl } from '@/lib/event-queries'
 import { requireOwner } from '@/lib/owner'
+import { canUsePhotoQr, type Plan } from '@/lib/plans'
 import { ownerSummary } from '@/lib/product'
 
 export const metadata = { title: 'Personalise your QR' }
@@ -12,6 +13,7 @@ export default async function CodePage() {
   const { code, active } = await ownerSummary(session.user.id)
   if (!code) throw new Error('Personal code missing after setup')
   // Same URL the plain /app/qr.png is made from. The browser is only ever handed this string; it cannot pick another.
+  const plan = ((session.user as { plan?: string }).plan ?? 'free') as Plan
   const url = `${appBaseUrl()}/t/${code.slug}`
 
   return (
@@ -29,7 +31,7 @@ export default async function CodePage() {
           <p><strong>Your Mode is Incognito.</strong> Incognito hides your name and photo on your page, but a face in the code artwork will still show who you are to anyone who sees the code. Use a logo or an object instead if you want to stay anonymous.</p>
         </div>
       )}
-      <QrStudio url={url} />
+      <QrStudio url={url} photoLocked={!canUsePhotoQr(plan).ok} />
     </div>
   )
 }

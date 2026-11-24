@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ArrowCounterClockwise, CheckCircle, DownloadSimple, ImageSquare, Warning, XCircle } from '@phosphor-icons/react'
+import Link from 'next/link'
 import { cropRect } from '@/lib/qr-studio/core'
 import { DEFAULT_DESIGN, LIMITS, normaliseDesign, renderDesign, type Design } from '@/lib/qr-studio/design'
 import { MAX_FILE_BYTES, sniffImage, toLuminance, withinPixelCap, workingSize } from '@/lib/qr-studio/image'
@@ -28,7 +29,7 @@ function Slider({ label, value, min, max, step, onChange, show }: { label: strin
  * QR Studio. The destination `url` comes from the server and is the only thing ever encoded: nothing in
  * this component (or in a saved design) can change it. The photo stays in this browser tab.
  */
-export function QrStudio({ url }: { url: string }) {
+export function QrStudio({ url, photoLocked = false }: { url: string; photoLocked?: boolean }) {
   const [design, setDesign] = useState<Design>(DEFAULT_DESIGN)
   const [photo, setPhoto] = useState<Photo | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -85,6 +86,8 @@ export function QrStudio({ url }: { url: string }) {
 
   const current = currentResult(version, result)
   const allowDownload = canExport(version, result)
+  const proLocked = photoLocked && design.style === 'photo' // UI gate only: processing is on the device
+  const canDownload = allowDownload && !proLocked
 
   // Preview canvas.
   useEffect(() => {
@@ -150,7 +153,7 @@ export function QrStudio({ url }: { url: string }) {
   }
 
   function download() {
-    if (!allowDownload) return
+    if (!canDownload) return
     const c = document.createElement('canvas')
     c.width = rendered.w; c.height = rendered.h
     c.getContext('2d')?.putImageData(toImageData(rendered), 0, 0)
@@ -182,7 +185,7 @@ export function QrStudio({ url }: { url: string }) {
       </div>
       <div className="grid grid-cols-2 gap-2" role="group" aria-label="Style">
         <button type="button" aria-pressed={design.style === 'classic'} onClick={() => edit({ style: 'classic' })} className={design.style === 'classic' ? 'action-primary' : 'action-secondary'}>Classic</button>
-        <button type="button" aria-pressed={design.style === 'photo'} onClick={() => edit({ style: 'photo' })} className={design.style === 'photo' ? 'action-primary' : 'action-secondary'}>Photo</button>
+        <button type="button" aria-pressed={design.style === 'photo'} onClick={() => edit({ style: 'photo' })} className={design.style === 'photo' ? 'action-primary' : 'action-secondary'}>Photo{photoLocked && <span className="plan-badge ml-2 !bg-[var(--deep)] !text-[var(--lime)]">Pro</span>}</button>
       </div>
       <fieldset disabled={!showPhotoStyle} className="grid gap-4 disabled:opacity-50">
         <legend className="sr-only">Picture and code settings</legend>
@@ -254,6 +257,7 @@ export function QrStudio({ url }: { url: string }) {
           <ul className="list-disc pl-5 leading-6">{advice.map((a) => <li key={a}>{a}</li>)}</ul>
         </div>
       )}
+      {proLocked && <p role="note" className="rounded-lg bg-[var(--surface-muted)] p-3 text-sm leading-6">Photo QR is part of Pro. You can try it here; downloading needs Pro. <Link href="/plans" className="font-bold text-[var(--accent)] underline">Compare plans</Link></p>}
       <button type="button" onClick={() => edit({ ...DEFAULT_DESIGN, style: 'classic' })} className="action-secondary"><ArrowCounterClockwise size={18} />Reset to standard QR</button>
       <div className="grid gap-1">
         <p className="text-xs font-extrabold uppercase tracking-[.12em] text-[var(--muted)]">Link in the code</p>
@@ -270,11 +274,11 @@ export function QrStudio({ url }: { url: string }) {
       {checks}
       <div className="sticky bottom-[calc(76px+env(safe-area-inset-bottom))] z-20 order-last -mx-4 flex items-center gap-3 border-t border-[var(--line)] bg-[var(--page)] px-4 py-3 sm:-mx-7 sm:px-7 lg:hidden">
         <p className="min-w-0 flex-1 truncate text-sm font-bold">{status.charAt(0).toUpperCase() + status.slice(1)}</p>
-        <button type="button" onClick={download} disabled={!allowDownload} className="action-primary shrink-0 disabled:opacity-40"><DownloadSimple size={18} weight="bold" />Download PNG</button>
+        <button type="button" onClick={download} disabled={!canDownload} className="action-primary shrink-0 disabled:opacity-40"><DownloadSimple size={18} weight="bold" />Download PNG</button>
       </div>
       <div className="hidden lg:order-4 lg:col-start-3 lg:block">
-        <button type="button" onClick={download} disabled={!allowDownload} className="action-primary w-full disabled:opacity-40"><DownloadSimple size={18} weight="bold" />Download PNG</button>
-        <p className="mt-2 text-xs leading-5 text-[var(--muted)]">{allowDownload ? 'Saved as scanme-qr.png: white background, whole-pixel squares and a 4-square quiet border.' : 'Download unlocks when this exact design passes every test.'}</p>
+        <button type="button" onClick={download} disabled={!canDownload} className="action-primary w-full disabled:opacity-40"><DownloadSimple size={18} weight="bold" />Download PNG</button>
+        <p className="mt-2 text-xs leading-5 text-[var(--muted)]">{proLocked ? 'Downloading a Photo QR needs Pro. The Classic code downloads on any plan.' : allowDownload ? 'Saved as scanme-qr.png: white background, whole-pixel squares and a 4-square quiet border.' : 'Download unlocks when this exact design passes every test.'}</p>
       </div>
     </div>
   )
