@@ -32,6 +32,18 @@ ScanMe is a multi-owner QR networking product. An owner creates a permanent code
 5. Run `npm run db:verify` to check constraints, grants, and cross-owner isolation.
 6. Start with `npm run dev`, then open `http://localhost:3000`.
 
+## Stripe
+
+Env var names (values live only in your host and `.env.local`, never in git): `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_PRO_PRICE_ID`.
+
+Webhook endpoint `/api/stripe/webhook`. In the Stripe dashboard subscribe it to: `checkout.session.completed`, `checkout.session.async_payment_succeeded`, `checkout.session.async_payment_failed`, `invoice.payment_failed`, `customer.subscription.updated`, `customer.subscription.deleted`.
+
+Also switch on Stripe's customer emails in the dashboard (successful payments, refunds, and the subscription emails under Billing) so Pro subscribers get receipts. One-off event payments already request a Stripe invoice. Tax/VAT is not configured in code; decide that with your accountant first.
+
+Local testing: use test-mode keys only (`sk_test_...`), run `stripe listen --forward-to localhost:3000/api/stripe/webhook`, and put the `whsec_...` it prints in `STRIPE_WEBHOOK_SECRET`. Pay with Stripe's test card 4242 4242 4242 4242. Never use live keys locally.
+
+The API version is pinned in `lib/stripe.ts` (`STRIPE_API_VERSION`).
+
 ## Verification
 
 ```bash
