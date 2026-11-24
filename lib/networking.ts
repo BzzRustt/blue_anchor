@@ -4,6 +4,7 @@
  * lib/db/rls.sql; this file only calls them as the verified attendee and maps their
  * short error codes to wording.
  */
+import { cache } from 'react'
 import { sql } from 'drizzle-orm'
 import { visitorDb, withAttendeeDb } from '@/lib/db'
 import { getJoinContext, loadMyCard, verifiedAttendeeId, type JoinContext, type MyCard } from '@/lib/event-join'
@@ -32,29 +33,34 @@ export interface FoundPerson {
 export const rowsOf = <T>(result: unknown): T[] =>
   (Array.isArray(result) ? result : (result as { rows: unknown[] }).rows) as T[]
 
-export async function networkingInfo(eventId: string): Promise<Networking> {
+// Cached per request, so attendeeSession can start them early and the page just awaits the same promise.
+export const networkingInfo = cache(async (eventId: string): Promise<Networking> => {
   const [row] = rowsOf<{ state: NetworkingState; discovery: Networking['discovery']; messaging: boolean; opens_at: string; replies_until: string; replies_open: boolean }>(
     await visitorDb.execute(sql`select *, now() < replies_until as replies_open from event_networking(${eventId}::uuid)`)
   )
   return { state: row?.state ?? 'closed', discovery: row?.discovery ?? 'off', messaging: !!row?.messaging, opensAt: new Date(row?.opens_at ?? 0), repliesUntil: new Date(row?.replies_until ?? 0), repliesOpen: !!row?.replies_open && (row.state === 'live' || row.state === 'follow_up') }
-}
+})
 
 /** The event plus the verified attendee using this browser, or null for either. */
 export async function attendeeSession(slug: string): Promise<{ ctx: JoinContext; me: MyCard | null } | null> {
   const ctx = await getJoinContext(slug)
   if (!ctx) return null
   const id = await verifiedAttendeeId(ctx.eventId)
+  // Pages need these next; start them now so they overlap with loading the card (rejections are
+  // handled where the page awaits them).
+  void networkingInfo(ctx.eventId).catch(() => {})
+  if (id) void unreadCount(id).catch(() => {})
   const me = id ? await loadMyCard(id, ctx.eventId) : null
   return { ctx, me: me && me.status !== 'withdrawn' ? me : null }
 }
 
-export async function unreadCount(attendeeId: string): Promise<number> {
+export const unreadCount = cache(async (attendeeId: string): Promise<number> => {
   const [row] = await withAttendeeDb(attendeeId, async (tx) => rowsOf<{ n: number }>(await tx.execute(sql`
     select count(*)::int as n from event_messages m join message_requests r on r.id = m.request_id
     where m.read_at is null and m.from_attendee_id <> ${attendeeId}::uuid
       and (r.status = 'accepted' or (r.status = 'pending' and r.to_attendee_id = ${attendeeId}::uuid))`)))
   return row?.n ?? 0
-}
+})
 
 const WORDING: Record<string, string> = {
   not_attendee: 'Set up your event profile first.',

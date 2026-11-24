@@ -17,8 +17,9 @@ export function QuestionFields({ on, type, prompt, max, options }: { on: boolean
       <div className={`grid gap-4 ${enabled ? '' : 'opacity-50'}`}>
         <label className="field-label">Question type<select className="field-select" name="question_type" value={current} onChange={(e) => setCurrent(e.target.value as QuestionType)}>{QUESTION_TYPES.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}</select></label>
         <label className="field-label">Question<input className="field-input" name="question_prompt" defaultValue={prompt} maxLength={120} placeholder={current === 'scale' ? 'Rate my set from 1 to 5' : current === 'yes_no' ? 'Would you come to my next gig?' : current === 'choice' ? 'Which song should I play next?' : 'What’s on your mind today?'} /></label>
-        <label className={`field-label ${current === 'scale' ? '' : 'hidden'}`}>Rating scale<select className="field-select" name="question_max" defaultValue={String(max)}><option value="5">1 to 5</option><option value="10">1 to 10</option></select></label>
-        <label className={`field-label ${current === 'choice' ? '' : 'hidden'}`}>Choices (one per line, at least two)<textarea className="field-textarea" name="question_options" defaultValue={options.join('\n')} maxLength={300} /></label>
+        {/* Not rendered (rather than CSS-hidden): .field-label sets display and beat the "hidden" class. */}
+        {current === 'scale' && <label className="field-label">Rating scale<select className="field-select" name="question_max" defaultValue={String(max)}><option value="5">1 to 5</option><option value="10">1 to 10</option></select></label>}
+        {current === 'choice' && <label className="field-label">Choices (one per line, at least two)<textarea className="field-textarea" name="question_options" defaultValue={options.join('\n')} maxLength={300} /></label>}
         {current === 'yes_no' && <p className="text-xs text-[var(--muted)]">Visitors answer Yes or No.</p>}
         {current === 'open_text' && <p className="text-xs text-[var(--muted)]">Visitors write a short answer.</p>}
       </div>

@@ -7,7 +7,8 @@ export function ThemeToggle() {
   const [dark, setDark] = useState(false)
 
   useEffect(() => {
-    const nextDark = window.localStorage.getItem('scanme-theme') === 'dark'
+    const saved = window.localStorage.getItem('scanme-theme')
+    const nextDark = saved ? saved === 'dark' : window.matchMedia('(prefers-color-scheme: dark)').matches
     document.documentElement.dataset.theme = nextDark ? 'dark' : 'light'
     const frame = window.requestAnimationFrame(() => setDark(nextDark))
     return () => window.cancelAnimationFrame(frame)

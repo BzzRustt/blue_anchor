@@ -22,7 +22,7 @@ export const metadata: Metadata = {
  * toggle (the workspace and marketing header) honoured a saved "dark", so log in, sign up and
  * the attendee pages came up light and flashed. A fixed string with no user input in it.
  */
-const THEME_BOOT = "try{if(localStorage.getItem('scanme-theme')==='dark')document.documentElement.dataset.theme='dark'}catch(e){}"
+const THEME_BOOT = "try{var t=localStorage.getItem('scanme-theme');if(t==='dark'||(!t&&matchMedia('(prefers-color-scheme: dark)').matches))document.documentElement.dataset.theme='dark'}catch(e){}"
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (

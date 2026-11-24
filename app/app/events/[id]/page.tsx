@@ -81,9 +81,9 @@ export default async function EventPage({ params, searchParams }: { params: Prom
         <a className="action-secondary" href={url} target="_blank" rel="noreferrer"><ArrowSquareOut size={18} />Attendee view</a>
       </header>
 
-      <nav aria-label="Event sections" className="flex gap-1 overflow-x-auto border-b border-[var(--line)]">
+      <nav aria-label="Event sections" className="grid grid-cols-4 border-b border-[var(--line)]">
         {TABS.map(([key, label]) => (
-          <Link key={key} href={`${base}?tab=${key}`} aria-current={tab === key ? 'page' : undefined} className={`-mb-px shrink-0 border-b-2 px-3 pb-3 text-sm font-bold ${tab === key ? 'border-[var(--accent)] text-[var(--ink)]' : 'border-transparent text-[var(--muted)] hover:text-[var(--ink)]'}`}>
+          <Link key={key} href={`${base}?tab=${key}`} aria-current={tab === key ? 'page' : undefined} className={`-mb-px min-w-0 truncate border-b-2 px-1 pb-3 text-center text-sm font-bold ${tab === key ? 'border-[var(--accent)] text-[var(--ink)]' : 'border-transparent text-[var(--muted)] hover:text-[var(--ink)]'}`}>
             {label}{key === 'attendees' && <span className="ml-1.5 rounded-md bg-[var(--surface-muted)] px-1.5 text-xs tabular-nums">{stats.registered}</span>}
           </Link>
         ))}

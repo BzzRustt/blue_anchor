@@ -6,7 +6,7 @@
  * RLS — not just this file — stops one attendee touching another's card.
  */
 import { cache } from 'react'
-import { and, asc, eq, sql } from 'drizzle-orm'
+import { and, eq, sql } from 'drizzle-orm'
 import { cookies, headers } from 'next/headers'
 import { publicLabel } from '@/lib/events'
 import { schema, visitorDb, withAttendeeDb } from '@/lib/db'
@@ -73,16 +73,14 @@ function sessionSecret(): string {
 export const getJoinContext = cache(async (slug: string): Promise<JoinContext | null> => {
   if (!/^[a-z0-9-]{1,80}$/.test(slug)) return null
 
-  const result = await visitorDb.execute(sql`select * from join_event_info(${slug})`)
+  // One round trip: the event and its question blocks together (each query is a separate HTTPS call).
+  const result = await visitorDb.execute(sql`select i.*, (select coalesce(json_agg(json_build_object('id', b.id, 'type', b.type, 'required', b.required, 'config', b.config) order by b.position), '[]'::json)
+    from question_blocks b where b.campaign_id = i.campaign_id) as blocks from join_event_info(${slug}) i`)
   const rows = (Array.isArray(result) ? result : (result as { rows: unknown[] }).rows) as Array<Record<string, unknown>>
   const row = rows[0]
   if (!row) return null
 
-  const blocks = await visitorDb
-    .select()
-    .from(schema.questionBlocks)
-    .where(eq(schema.questionBlocks.campaignId, String(row.campaign_id)))
-    .orderBy(asc(schema.questionBlocks.position))
+  const blocks = (row.blocks ?? []) as Array<{ id: string; type: string; required: boolean; config: unknown }>
 
   return {
     eventId: String(row.event_id),

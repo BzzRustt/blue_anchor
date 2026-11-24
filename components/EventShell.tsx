@@ -1,6 +1,8 @@
 import { Scan } from '@phosphor-icons/react/dist/ssr'
 import Link from 'next/link'
 import type { ReactNode } from 'react'
+import { BusyForms } from '@/components/BusyForms'
+import { ThemeToggle } from '@/components/ThemeToggle'
 
 /** The public attendee frame. Mirrors the visitor page at /t/[code] so both feel like one product. */
 export function EventShell({ eyebrow, title, subtitle, children }: { eyebrow?: string; title: string; subtitle?: string; children?: ReactNode }) {
@@ -11,8 +13,12 @@ export function EventShell({ eyebrow, title, subtitle, children }: { eyebrow?: s
         <div className="p-5 sm:p-8">
           <div className="flex items-start justify-between gap-4">
             <span className="text-xs font-extrabold uppercase tracking-[.14em] text-[var(--accent-strong)]">{eyebrow ?? 'Event'}</span>
-            <Link href="/" className="inline-flex items-center gap-1.5 text-xs font-extrabold hover:underline"><Scan size={16} className="text-[var(--accent)]" />scanme</Link>
+            <div className="flex items-center gap-2">
+              <Link href="/" className="inline-flex items-center gap-1.5 text-xs font-extrabold hover:underline"><Scan size={16} className="text-[var(--accent)]" />scanme</Link>
+              <ThemeToggle />
+            </div>
           </div>
+          <BusyForms />
           <h1 className="mt-6 text-3xl font-extrabold tracking-[-.055em]">{title}</h1>
           {subtitle && <p className="mt-2 text-sm leading-6 text-[var(--muted)]">{subtitle}</p>}
           <div className="mt-6">{children}</div>

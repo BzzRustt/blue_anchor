@@ -30,7 +30,7 @@ export default async function BadgesPage({ params }: { params: Promise<{ id: str
       <style>{`
         @page { size: A4; margin: 8mm 10mm; }
         @media print {
-          aside, header, .fixed, .no-print { display: none !important; }
+          aside, header, nav, footer, .fixed, .no-print { display: none !important; }
           .min-h-dvh { display: block !important; }
           main { max-width: none !important; padding: 0 !important; }
           .badge-sheet { display: grid !important; grid-template-columns: repeat(2, 90mm) !important; grid-auto-rows: 64mm !important; gap: 4mm 6mm !important; justify-content: center; }
@@ -55,12 +55,12 @@ export default async function BadgesPage({ params }: { params: Promise<{ id: str
             <div className="min-w-0">
               {b.source === 'walk_up'
                 ? <p className="mt-6 border-b-2 border-[#102018] pb-1 text-[11px] font-bold uppercase tracking-[.1em] text-[#5b6b62]">Write your name</p>
-                : <p className="line-clamp-2 break-words text-[26px] font-extrabold leading-[1.1] tracking-[-.02em]">{b.displayName}</p>}
+                : <p className="line-clamp-2 break-words text-[34px] font-extrabold leading-[1.05] tracking-[-.02em]">{b.displayName}</p>}
               {b.roleLetter && <p className="mt-1.5 text-[13px] font-extrabold uppercase tracking-[.12em] text-[#2f5a46]">{roleLabel.get(b.roleLetter) ?? b.roleLetter}</p>}
             </div>
             <div className="flex items-end justify-between gap-3">
               <div className="min-w-0">
-                <p className="font-mono text-[30px] font-extrabold leading-none tracking-tight">{b.tag}</p>
+                <p className="font-mono text-[22px] font-extrabold leading-none tracking-tight">{b.tag}</p>
                 <p className="mt-1.5 truncate text-[9px] font-bold uppercase tracking-[.1em] text-[#5b6b62]">{event.name} · code {event.accessCode}</p>
               </div>
               <div className="flex w-[22mm] shrink-0 flex-col items-center gap-0.5">

@@ -245,3 +245,7 @@ input[type='range'] { accent-color: var(--accent); }
     transition-duration: 0.01ms !important;
   }
 }
+
+/* Set by BusyForms on the pressed button while the server works. */
+button.is-busy { opacity: .6; cursor: progress; }
+button.is-busy::after { content: '…'; }

@@ -7,6 +7,7 @@ import { DirtyForm, SaveButton } from '@/components/DirtyForm'
 import { proConfigured } from '@/lib/stripe'
 import { SignOutButton } from '@/components/workspace/SignOutButton'
 import { PageIntro } from '@/components/workspace/PageIntro'
+import { PhotoUpload } from '@/components/workspace/PhotoUpload'
 import { schema, withOwnerDb } from '@/lib/db'
 import { MODE_INFO, type ModeKey } from '@/lib/modes'
 import { requireOwner } from '@/lib/owner'
@@ -54,7 +55,7 @@ export default async function ProfilePage({ searchParams }: { searchParams: Prom
           <h2 id="photo-title" className="text-lg font-extrabold tracking-[-.03em]">Profile photo</h2>
           <p className="text-sm text-[var(--muted)]">JPEG, PNG or WebP, up to 5 MB. We crop it to a square and remove hidden details like location.</p>
           <div className="flex flex-wrap gap-2">
-            <form action={uploadPhoto} className="flex flex-wrap items-center gap-2"><label className="sr-only" htmlFor="photo">Choose a photo</label><input id="photo" className="field-input !w-auto text-sm" type="file" name="photo" accept="image/jpeg,image/png,image/webp" required /><button className="action-primary">Upload</button></form>
+            <PhotoUpload action={uploadPhoto} />
             {owner.image && <form action={removePhoto}><button className="action-quiet">Remove photo</button></form>}
           </div>
         </div>

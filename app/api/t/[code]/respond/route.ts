@@ -1,4 +1,4 @@
-import { and, eq, gte, or, sql } from 'drizzle-orm'
+import { and, eq, gte, sql } from 'drizzle-orm'
 import { NextRequest, NextResponse } from 'next/server'
 import { cookies } from 'next/headers'
 import { z } from 'zod'
@@ -29,11 +29,12 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
   const viewer = await auth.api.getSession({ headers: request.headers }).catch(() => null)
   if (viewer?.user.id === experience.code.userId) return NextResponse.json({ error: 'This is your own page, so nothing was sent. Use Preview to try it out.' }, { status: 403 })
 
-  // Blocked by browser (the visitor cookie, permanent) or by network (the IP, 24 hours only, so a
-  // shared Wi-Fi isn't shut out for good but clearing cookies straight away doesn't get round it).
+  // Blocked by browser only (the visitor cookie). The network address is deliberately not used: on a
+  // shared Wi-Fi (a venue, an office) it would shut out everyone else there. Trade-off: someone who
+  // clears their cookies can respond again; the spam limiter above still applies to them.
   const [blocked] = await visitorDb.select({ id: schema.blockedDevices.id }).from(schema.blockedDevices).where(and(
     eq(schema.blockedDevices.userId, experience.code.userId),
-    or(eq(schema.blockedDevices.sessionToken, token), and(eq(schema.blockedDevices.deviceHash, ipHash), gte(schema.blockedDevices.createdAt, new Date(Date.now() - 86_400_000)))),
+    eq(schema.blockedDevices.sessionToken, token),
   )).limit(1)
   if (blocked) return NextResponse.json({ error: 'Responses are not available from this device.' }, { status: 403 })
 
