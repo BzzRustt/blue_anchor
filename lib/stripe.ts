@@ -34,10 +34,10 @@ export const stripeHeaders = (key: string, idempotencyKey?: string): Record<stri
 })
 
 /**
- * Pro checkout key: one per user per 10-minute window. A double click or retry inside the window gets
+ * Pro checkout key: one per user and customer per 2-minute window. A double click or retry inside the window gets
  * the same session back instead of creating a second; after the window a fresh attempt is allowed.
  */
-export const proIdempotencyKey = (userId: string, nowMs = Date.now()) => `pro_${userId}_${Math.floor(nowMs / 600_000)}`
+export const proIdempotencyKey = (userId: string, customerId: string | null, nowMs = Date.now()) => `pro_${userId}_${customerId ?? 'new'}_${Math.floor(nowMs / 120_000)}`
 
 export function checkoutBody(input: { amountPence: number; currency: string; productName: string; purchaseId: string; successUrl: string; cancelUrl: string }) {
   return new URLSearchParams({
@@ -62,6 +62,8 @@ export function proCheckoutBody(input: { userId: string; email: string; customer
     client_reference_id: input.userId,
     'line_items[0][price]': input.priceId,
     'line_items[0][quantity]': '1',
+    // Lets customer.subscription.updated activate Pro later (3-D Secure / delayed payment) without the checkout event.
+    'subscription_data[metadata][user_id]': input.userId,
   })
   if (input.customerId) body.set('customer', input.customerId)
   else body.set('customer_email', input.email)
@@ -102,7 +104,7 @@ export const proConfigured = () => stripeConfigured() && Boolean(process.env.STR
 /** Pro subscription checkout. client_reference_id carries the account id back to the webhook. */
 export async function createProCheckout(input: { userId: string; email: string; customerId: string | null; successUrl: string; cancelUrl: string }) {
   if (!proConfigured()) return null
-  const json = await stripePost('checkout/sessions', proCheckoutBody({ ...input, priceId: process.env.STRIPE_PRO_PRICE_ID! }), proIdempotencyKey(input.userId))
+  const json = await stripePost('checkout/sessions', proCheckoutBody({ ...input, priceId: process.env.STRIPE_PRO_PRICE_ID! }), proIdempotencyKey(input.userId, input.customerId))
   return typeof json?.url === 'string' ? json.url : null
 }
 
@@ -112,7 +114,7 @@ export async function createBillingPortal(customerId: string, returnUrl: string)
   return typeof json?.url === 'string' ? json.url : null
 }
 
-export type StripeEvent = { id?: string; type?: string; data?: { object?: { id?: string; mode?: string; payment_status?: string; client_reference_id?: string; customer?: string; status?: string; subscription?: string } } }
+export type StripeEvent = { id?: string; type?: string; api_version?: string; data?: { object?: { id?: string; mode?: string; payment_status?: string; client_reference_id?: string; customer?: string; status?: string; subscription?: string; metadata?: { user_id?: string } } } }
 export type StripeAction =
   | { kind: 'activate_pro'; userId: string; customerId: string; subscriptionId: string }
   | { kind: 'confirm_purchase'; sessionId: string; ref?: string }
@@ -142,6 +144,9 @@ export function decideStripeAction(event: StripeEvent): StripeAction {
     case 'customer.subscription.deleted':
       return o?.customer ? { kind: 'deactivate_pro', customerId: o.customer } : { kind: 'ignore' }
     case 'customer.subscription.updated':
+      // Became active/trialing later (3-D Secure, delayed payment): activate from the metadata set at checkout. No metadata: ignore.
+      if (o?.id && o.customer && o.metadata?.user_id && ['active', 'trialing'].includes(o.status ?? ''))
+        return { kind: 'activate_pro', userId: o.metadata.user_id, customerId: o.customer, subscriptionId: o.id }
       return o?.customer && ['canceled', 'unpaid', 'incomplete_expired'].includes(o.status ?? '')
         ? { kind: 'deactivate_pro', customerId: o.customer }
         : { kind: 'ignore' }
@@ -180,17 +185,24 @@ export async function fetchSubscription(id: string, key: string, fetchImpl: Fetc
 export async function customerHasLiveSubscription(customerId: string, key: string, fetchImpl: FetchLike = fetch as unknown as FetchLike): Promise<boolean | null> {
   const j = await stripeGet(`subscriptions?customer=${encodeURIComponent(customerId)}&status=all&limit=100`, key, fetchImpl)
   if (!j || !Array.isArray(j.data)) return null
-  return j.data.some((s) => LIVE.includes((s as { status?: string }).status ?? ''))
+  // Only Pro subscriptions count. ponytail: if STRIPE_PRO_PRICE_ID is unset, any live subscription counts.
+  const priceId = process.env.STRIPE_PRO_PRICE_ID
+  return j.data.some((s) => {
+    const sub = s as { status?: string; items?: { data?: { price?: { id?: string } }[] } }
+    return LIVE.includes(sub.status ?? '') && (!priceId || (sub.items?.data ?? []).some((i) => i.price?.id === priceId))
+  })
 }
 
-/** Postgres "undefined function" (42883), however the driver wraps it. */
+/** SQLSTATE 42883 (undefined function) on the error or a nested cause, and a message that names confirm_event_purchase. */
 export function isUndefinedFunction(err: unknown): boolean {
+  let code = false
+  let named = false
   let e = err as { code?: unknown; message?: unknown; cause?: unknown } | undefined
   for (let i = 0; e && typeof e === 'object' && i < 5; i++, e = e.cause as typeof e) {
-    if (e.code === '42883') return true
-    if (typeof e.message === 'string' && /function .*does not exist/i.test(e.message)) return true
+    if (e.code === '42883') code = true
+    if (typeof e.message === 'string' && e.message.includes('confirm_event_purchase')) named = true
   }
-  return false
+  return code && named
 }
 
 export type StripeDeps = {
@@ -199,9 +211,9 @@ export type StripeDeps = {
   activatePro: (userId: string, customerId: string) => Promise<unknown>
   deactivatePro: (customerId: string) => Promise<unknown>
   /** 2-argument SQL function (session id + our purchase id). */
-  confirmPurchase: (sessionId: string, ref: string | null) => Promise<unknown>
+  confirmPurchase: (sessionId: string, ref: string | null) => Promise<string | null>
   /** Original 1-argument function, used until the new SQL is applied. */
-  confirmPurchaseLegacy: (sessionId: string) => Promise<unknown>
+  confirmPurchaseLegacy: (sessionId: string) => Promise<string | null>
   warn?: (message: string) => void
 }
 export type StripeResult = { status: number; body: string }
@@ -212,13 +224,16 @@ export type StripeResult = { status: number; body: string }
  * A failed Stripe lookup answers 503 so Stripe retries later.
  */
 export async function handleStripeEvent(event: StripeEvent, deps: StripeDeps): Promise<StripeResult> {
+  if (event.api_version && event.api_version !== STRIPE_API_VERSION) (deps.warn ?? console.warn)(`[stripe] event ${event.id ?? '-'} api_version ${event.api_version} differs from pinned ${STRIPE_API_VERSION}`)
   const action = decideStripeAction(event)
   const retry: StripeResult = { status: 503, body: 'stripe lookup failed, retry' }
   switch (action.kind) {
     case 'activate_pro': {
       const s = await fetchSubscription(action.subscriptionId, deps.secretKey, deps.fetch)
       if (!s) return retry
+      if (s.status === 'incomplete') return retry // 3-D Secure / payment still in progress: Stripe retries
       if (LIVE.includes(s.status)) await deps.activatePro(action.userId, action.customerId)
+      else (deps.warn ?? console.warn)(`[stripe] ${event.type} event ${event.id ?? '-'} subscription not live (${s.status}), Pro not activated`)
       break
     }
     case 'deactivate_pro': {
@@ -227,14 +242,18 @@ export async function handleStripeEvent(event: StripeEvent, deps: StripeDeps): P
       if (!live) await deps.deactivatePro(action.customerId)
       break
     }
-    case 'confirm_purchase':
+    case 'confirm_purchase': {
+      let id: string | null
       try {
-        await deps.confirmPurchase(action.sessionId, action.ref ?? null)
+        id = await deps.confirmPurchase(action.sessionId, action.ref ?? null)
       } catch (e) {
         if (!isUndefinedFunction(e)) throw e
-        await deps.confirmPurchaseLegacy(action.sessionId)
+        ;(deps.warn ?? console.warn)('[stripe] confirm_event_purchase(text,text) not applied, using legacy')
+        id = await deps.confirmPurchaseLegacy(action.sessionId)
       }
+      if (!id) (deps.warn ?? console.warn)(`[stripe] paid checkout session matched no pending purchase (already confirmed or not found): ${action.sessionId}`)
       break
+    }
     case 'log_failure':
       ;(deps.warn ?? console.warn)(action.message)
       break

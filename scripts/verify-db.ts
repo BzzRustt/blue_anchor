@@ -93,10 +93,12 @@ const [grantCheck] = await admin`
     has_table_privilege('auth_user', 'codes', 'SELECT') AS auth_codes,
     has_column_privilege('visitor_user', 'users', 'name', 'SELECT') AS visitor_name,
     has_column_privilege('visitor_user', 'users', 'email', 'SELECT') AS visitor_email,
-    has_column_privilege('visitor_user', 'responses', 'answers', 'SELECT') AS visitor_answers
+    has_column_privilege('visitor_user', 'responses', 'answers', 'SELECT') AS visitor_answers,
+    has_function_privilege('visitor_user', 'public.confirm_event_purchase(text, text)', 'EXECUTE') AS visitor_confirm_purchase
 `
 check('app_user can query product data but not auth sessions', grantCheck.app_codes && !grantCheck.app_sessions)
 check('auth_user can persist auth data but cannot query campaigns/codes', grantCheck.auth_sessions && !grantCheck.auth_codes)
+check('visitor_user can execute the 2-argument confirm_event_purchase', grantCheck.visitor_confirm_purchase)
 check('visitor_user can read public names but not email or answers', grantCheck.visitor_name && !grantCheck.visitor_email && !grantCheck.visitor_answers)
 
 const [[appIdentity], [authIdentity], [visitorIdentity]] = await Promise.all([

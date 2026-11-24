@@ -48,6 +48,8 @@ Pro and event payments are re-checked against Stripe before acting (the webhook 
 
 Event-publish race fix: `lib/db/rls.sql` adds a 2-argument `confirm_event_purchase(text, text)`. The webhook uses it when present and falls back to the 1-argument version if it is not applied yet. Apply with `npm run db:rls` (your own owner database URL). Rollback: `DROP FUNCTION public.confirm_event_purchase(text, text);` (the original stays).
 
+Set the webhook endpoint's API version in the Stripe dashboard to match `STRIPE_API_VERSION` (or confirm the event shapes still fit); the webhook logs a warning line if an event arrives with a different version. `checkout.session.async_payment_failed` deliberately leaves the event awaiting payment, so the organiser can retry.
+
 Sandbox test steps (no real money; names of env vars only, values are yours): switch Stripe to a Sandbox/Test mode, create a test product and monthly price, set `STRIPE_SECRET_KEY` (test key), `STRIPE_PRO_PRICE_ID` and `STRIPE_WEBHOOK_SECRET` in `.env.local`, run `stripe listen --forward-to localhost:3000/api/stripe/webhook` and `npm run dev`. Check the local app is not pointed at your real database first; use a throwaway demo account. Cases: Pro upgrade with 4242 4242 4242 4242 (plan becomes Pro); cancel in the billing portal (back to Free); a declined renewal with 4000 0000 0000 0341 (use a Stripe test clock; Pro kept while retrying); 3-D Secure with 4000 0025 0000 3155; an event purchase with 4242 (event published); `stripe trigger checkout.session.async_payment_succeeded` and `stripe trigger invoice.payment_failed` should answer 200. Stripe dashboard labels may have changed; see Stripe's docs.
 
 ## Verification
