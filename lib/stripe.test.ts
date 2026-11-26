@@ -82,7 +82,7 @@ function fake(opts: { subs?: Record<string, string>; list?: string[]; stripeDown
       assert.equal(init.headers['Stripe-Version'], STRIPE_API_VERSION)
       if (opts.stripeDown) return { ok: false, status: 500, json: async () => ({ error: { type: 'api_error' } }) }
       const m = url.match(/subscriptions\/(sub_\w+)$/)
-      if (m) return opts.subs?.[m[1]] ? { ok: true, status: 200, json: async () => ({ status: opts.subs![m[1]] }) } : { ok: false, status: 404, json: async () => ({}) }
+      if (m) return opts.subs?.[m[1]] ? { ok: true, status: 200, json: async () => ({ status: opts.subs![m[1]], items: { data: [{ price: { id: opts.price ?? 'price_pro' } }] } }) } : { ok: false, status: 404, json: async () => ({}) }
       return { ok: true, status: 200, json: async () => ({ data: (opts.list ?? []).map((status) => ({ status, items: { data: [{ price: { id: opts.price ?? 'price_pro' } }] } })) }) }
     },
     activatePro: async (u, c) => { calls.push(`activate ${u} ${c}`) },
@@ -172,6 +172,21 @@ test('delayed Pro: updated-to-active event is re-checked with Stripe, then activ
   const g = fake({ subs: { sub_1: 'canceled' } })
   await handleStripeEvent(ev('customer.subscription.updated', { id: 'sub_1', customer: 'cus_1', status: 'active', metadata: { user_id: 'u1' } }), g.deps)
   assert.deepEqual(g.calls.filter((c) => c.startsWith('activate')), [])
+})
+test('activation needs a live subscription on the Pro price (a different price never grants Pro)', async () => {
+  const old = process.env.STRIPE_PRO_PRICE_ID
+  try {
+    process.env.STRIPE_PRO_PRICE_ID = 'price_pro'
+    const wrong = fake({ subs: { sub_1: 'active' }, price: 'price_other' })
+    assert.equal((await handleStripeEvent(ev('checkout.session.completed', sub), wrong.deps)).status, 200)
+    assert.deepEqual(wrong.calls.filter((c) => c.startsWith('activate')), [])
+    const right = fake({ subs: { sub_1: 'active' }, price: 'price_pro' })
+    await handleStripeEvent(ev('checkout.session.completed', sub), right.deps)
+    assert.deepEqual(right.calls, ['activate u1 cus_1'])
+  } finally {
+    if (old === undefined) delete process.env.STRIPE_PRO_PRICE_ID
+    else process.env.STRIPE_PRO_PRICE_ID = old
+  }
 })
 test('checkout completed with an incomplete subscription answers 503; dead ones log and answer 200', async () => {
   const a = fake({ subs: { sub_1: 'incomplete' } })

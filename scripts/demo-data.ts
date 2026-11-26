@@ -11,6 +11,7 @@
  * Uses DATABASE_OWNER_URL from .env.local; the value is never printed.
  */
 import { randomBytes } from 'node:crypto'
+import { writeFileSync } from 'node:fs'
 import { neon } from '@neondatabase/serverless'
 import { hashPassword } from 'better-auth/crypto'
 import { buildBlocks, parseModeConfig, type ModeKey } from '../lib/modes.ts'
@@ -286,7 +287,10 @@ async function seedAll() {
   console.log('\nDEMO DATA CREATED')
   console.log(Object.entries(c).map(([k, v]) => `  ${k}: ${v}`).join('\n'))
   console.log(`\nSite: ${site}`)
-  console.log(`Password for every demo login: ${password}`)
+  // The shared password goes to a gitignored file, never to the terminal log (which may be pasted somewhere).
+  const accountsFile = process.env.SCANME_ENV === 'test' ? '.test-accounts.txt' : '.demo-accounts.txt'
+  writeFileSync(accountsFile, `Shared password for every synthetic login (${PEOPLE.map((p) => `${p.key}@demo.scanme.test`).join(', ')}):\n${password}\n`, { mode: 0o600 })
+  console.log(`Password for every demo login is in ${accountsFile} (gitignored).`)
   console.log('\nLogins (sign in at /login):')
   for (const p of PEOPLE) console.log(`  ${`${p.key}@demo.scanme.test`.padEnd(32)} ${p.plan.padEnd(4)} ${p.name}${personal[p.key] ? `   personal page: ${site}/t/${personal[p.key]}` : ''}`)
   console.log('\nEvents (organiser: organiser@demo.scanme.test unless noted):')

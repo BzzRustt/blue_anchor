@@ -88,3 +88,7 @@ Production uses three `NOBYPASSRLS` database roles. `auth_user` can access only 
 - Plan comparison and server-side plan gates exist, but billing is not connected.
 
 The product rules and data model are documented in `docs/PRODUCT_SPEC.md`. `PROJECT_CONTEXT.md` describes the earlier Supabase proof of concept and is out of date.
+
+## Isolated test environment
+
+A separate Neon test branch, test-mode Stripe and captured email. Run everything through the `test:*` scripts (they never read `.env.local`). Setup, accounts, seeding and the Stripe test purchase are in [docs/TEST_ENVIRONMENT.md](docs/TEST_ENVIRONMENT.md).

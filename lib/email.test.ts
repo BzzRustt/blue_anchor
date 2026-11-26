@@ -118,3 +118,25 @@ test('a name cannot inject markup into the html part', () => {
   assert.doesNotMatch(email.html, /<script>/)
   assert.match(email.html, /&lt;script&gt;/)
 })
+
+test('capture mode writes the email to the outbox file and never calls Resend', async () => {
+  const { mkdtempSync, readFileSync } = await import('node:fs')
+  const { join } = await import('node:path')
+  const { tmpdir } = await import('node:os')
+  const dir = mkdtempSync(join(tmpdir(), 'scanme-outbox-'))
+  const previous = { mode: process.env.EMAIL_MODE, file: process.env.EMAIL_OUTBOX_FILE }
+  process.env.EMAIL_MODE = 'capture'
+  process.env.EMAIL_OUTBOX_FILE = join(dir, 'emails.jsonl')
+  try {
+    const calls = captureFetch()
+    const result = await sendEmail({ to: 'synthetic@demo.scanme.test', subject: 'Hello', text: 't', html: '<p>t</p>' })
+    assert.equal(result, 'sent')
+    assert.equal(calls.length, 0)
+    const line = JSON.parse(readFileSync(process.env.EMAIL_OUTBOX_FILE, 'utf8').trim())
+    assert.equal(line.to, 'synthetic@demo.scanme.test')
+    assert.equal(line.subject, 'Hello')
+  } finally {
+    if (previous.mode === undefined) delete process.env.EMAIL_MODE; else process.env.EMAIL_MODE = previous.mode
+    if (previous.file === undefined) delete process.env.EMAIL_OUTBOX_FILE; else process.env.EMAIL_OUTBOX_FILE = previous.file
+  }
+})

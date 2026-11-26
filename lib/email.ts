@@ -35,10 +35,20 @@ export interface Email {
 
 /** Lets callers skip work that only makes sense if an email can actually leave. */
 export function emailConfigured(): boolean {
-  return Boolean(process.env.RESEND_API_KEY && process.env.EMAIL_FROM)
+  return process.env.EMAIL_MODE === 'capture' || Boolean(process.env.RESEND_API_KEY && process.env.EMAIL_FROM)
 }
 
 export async function sendEmail(email: Email): Promise<SendResult> {
+  // Test environment (scripts/with-test-env.mjs sets EMAIL_MODE=capture): write the mail to a local file and send nothing.
+  if (process.env.EMAIL_MODE === 'capture') {
+    const { appendFile, mkdir } = await import('node:fs/promises')
+    const { dirname } = await import('node:path')
+    const file = process.env.EMAIL_OUTBOX_FILE ?? '.test-outbox/emails.jsonl'
+    await mkdir(dirname(file), { recursive: true })
+    await appendFile(file, JSON.stringify({ at: new Date().toISOString(), ...email }) + '\n')
+    return 'sent'
+  }
+
   const apiKey = process.env.RESEND_API_KEY
   const from = process.env.EMAIL_FROM
 

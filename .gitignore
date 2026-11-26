@@ -41,3 +41,9 @@ next-env.d.ts
 # Local Netlify folder
 .netlify
 deno.lock
+
+# Test environment (see docs/TEST_ENVIRONMENT.md)
+!.env.test.example
+.test-outbox/
+.test-accounts.txt
+.demo-accounts.txt

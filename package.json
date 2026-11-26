@@ -17,7 +17,13 @@
     "db:provision-runtime": "node scripts/provision-runtime-roles.mjs",
     "db:verify": "node scripts/verify-db.ts",
     "demo:seed": "node scripts/demo-data.ts seed",
-    "demo:delete": "node scripts/demo-data.ts delete"
+    "demo:delete": "node scripts/demo-data.ts delete",
+    "test:check": "node scripts/with-test-env.mjs --check",
+    "test:dev": "node scripts/with-test-env.mjs next dev",
+    "test:migrate": "node scripts/with-test-env.mjs drizzle-kit migrate && node scripts/with-test-env.mjs node scripts/apply-rls.mjs",
+    "test:seed": "node scripts/with-test-env.mjs node scripts/demo-data.ts seed",
+    "test:unseed": "node scripts/with-test-env.mjs node scripts/demo-data.ts delete",
+    "test:verify": "node scripts/with-test-env.mjs node scripts/verify-db.ts"
   },
   "dependencies": {
     "@neondatabase/serverless": "^1.2.0",

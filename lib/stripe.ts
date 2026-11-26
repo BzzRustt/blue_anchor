@@ -176,9 +176,11 @@ async function stripeGet(path: string, key: string, fetchImpl: FetchLike): Promi
 }
 
 /** The subscription's current status, or null if Stripe could not be asked. */
-export async function fetchSubscription(id: string, key: string, fetchImpl: FetchLike = fetch as unknown as FetchLike): Promise<{ status: string } | null> {
+export async function fetchSubscription(id: string, key: string, fetchImpl: FetchLike = fetch as unknown as FetchLike): Promise<{ status: string; priceIds: string[] } | null> {
   const j = await stripeGet(`subscriptions/${encodeURIComponent(id)}`, key, fetchImpl)
-  return j && typeof j.status === 'string' ? { status: j.status } : null
+  if (!j || typeof j.status !== 'string') return null
+  const items = (j.items as { data?: { price?: { id?: string } }[] } | undefined)?.data ?? []
+  return { status: j.status, priceIds: items.map((i) => i.price?.id ?? '') }
 }
 
 /** True/false, or null if Stripe could not be asked (never guess). */
@@ -232,8 +234,11 @@ export async function handleStripeEvent(event: StripeEvent, deps: StripeDeps): P
       const s = await fetchSubscription(action.subscriptionId, deps.secretKey, deps.fetch)
       if (!s) return retry
       if (s.status === 'incomplete') return retry // 3-D Secure / payment still in progress: Stripe retries
-      if (LIVE.includes(s.status)) await deps.activatePro(action.userId, action.customerId)
-      else (deps.warn ?? console.warn)(`[stripe] ${event.type} event ${event.id ?? '-'} subscription not live (${s.status}), Pro not activated`)
+      // Same rule as deactivation: only the Pro price grants Pro (any price when STRIPE_PRO_PRICE_ID is unset).
+      const priceId = process.env.STRIPE_PRO_PRICE_ID
+      const onProPrice = !priceId || s.priceIds.includes(priceId)
+      if (LIVE.includes(s.status) && onProPrice) await deps.activatePro(action.userId, action.customerId)
+      else (deps.warn ?? console.warn)(`[stripe] ${event.type} event ${event.id ?? '-'} subscription not Pro (status ${s.status}, on Pro price: ${onProPrice}), Pro not activated`)
       break
     }
     case 'deactivate_pro': {
