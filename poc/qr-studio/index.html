@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>QR Studio PoC</title>
+<style>
+  body { font: 15px/1.4 system-ui, sans-serif; margin: 0; padding: 16px; max-width: 1000px; margin-inline: auto; color: #10251a; }
+  label { display: block; margin: 8px 0 2px; font-weight: 600; }
+  input[type=text], select { width: 100%; padding: 6px; box-sizing: border-box; }
+  input[type=range] { width: 100%; }
+  .row { display: flex; gap: 16px; flex-wrap: wrap; }
+  .row > div { flex: 1 1 300px; }
+  canvas { width: 100%; max-width: 440px; image-rendering: pixelated; border: 1px solid #ccc; }
+  #status { font-weight: 700; padding: 8px 0; }
+  button { padding: 8px 14px; font-size: 15px; }
+  small { color: #555; }
+</style>
+</head>
+<body>
+<h1>QR Studio PoC</h1>
+<p><small>Proof of concept only. Your photo never leaves this page (no upload). A passed check is a software simulation, not proof that a printed code scans.</small></p>
+
+<label for="url">Link to encode (exact text)</label>
+<input id="url" type="text" value="https://scanme.example/t/k7Qp2xZ">
+<label for="file">Image (stays on this device)</label>
+<input id="file" type="file" accept="image/jpeg,image/png,image/webp">
+
+<div class="row">
+  <div>
+    <label>Renderer</label>
+    <select id="renderer">
+      <option value="fs">Photo: 3x3 + Floyd-Steinberg</option>
+      <option value="bayer">Photo: 3x3 + Bayer</option>
+      <option value="fs+cross">Photo: Floyd-Steinberg, centre cross protected</option>
+      <option value="classic">Classic</option>
+    </select>
+    <label>QR version</label>
+    <select id="version"><option value="">Smallest that fits</option><option>5</option><option>7</option><option>10</option></select>
+    <label>Zoom <output id="o_zoom"></output></label><input id="zoom" type="range" min="1" max="4" step="0.05" value="1">
+    <label>Position X <output id="o_panX"></output></label><input id="panX" type="range" min="-1" max="1" step="0.02" value="0">
+    <label>Position Y <output id="o_panY"></output></label><input id="panY" type="range" min="-1" max="1" step="0.02" value="0">
+    <label>Brightness <output id="o_brightness"></output></label><input id="brightness" type="range" min="-0.5" max="0.5" step="0.01" value="0">
+    <label>Contrast <output id="o_contrast"></output></label><input id="contrast" type="range" min="0.5" max="2.5" step="0.05" value="1">
+    <label>Gamma <output id="o_gamma"></output></label><input id="gamma" type="range" min="0.5" max="2" step="0.05" value="1">
+  </div>
+  <div>
+    <b>Photo QR</b><br><canvas id="photo"></canvas>
+    <div id="status">not checked</div>
+    <button id="download" disabled>Download PNG</button> <small id="why">Download unlocks when every tested condition passes.</small>
+    <div id="detail"></div>
+  </div>
+  <div><b>Classic QR (same link)</b><br><canvas id="classic"></canvas><div id="info"></div></div>
+</div>
+
+<script src="../../node_modules/jsqr/dist/jsQR.js"></script>
+<script type="module">
+import QRCode from 'https://esm.sh/qrcode@1.5.4';
+import { readBarcodes, setZXingModuleOverrides } from '../../node_modules/zxing-wasm/dist/es/reader/index.js';
+import { renderQr, validate, statusText } from './core.mjs';
+
+setZXingModuleOverrides({ locateFile: (p) => new URL('../../node_modules/zxing-wasm/dist/reader/' + p, import.meta.url).href });
+
+const $ = (id) => document.getElementById(id);
+const ids = ['zoom', 'panX', 'panY', 'brightness', 'contrast', 'gamma'];
+let src = null;            // { lum, w, h } luminance of the uploaded image
+let designVersion = 0;     // bumped on every edit; stale validation results are discarded
+let valid = false, timer = null, lastRaster = null;
+
+const decoders = {
+  jsqr: async ({ rgba, w, h }) => jsQR(rgba, w, h, { inversionAttempts: 'dontInvert' })?.data ?? null,
+  zxing: async ({ rgba, w, h }) => {
+    const r = await readBarcodes({ data: rgba, width: w, height: h, colorSpace: 'srgb' }, { formats: ['QRCode'], tryHarder: true });
+    return r[0]?.isValid ? r[0].text : null;
+  },
+};
+const jpeg = async ({ rgba, w, h }, q) => {
+  const c = document.createElement('canvas'); c.width = w; c.height = h;
+  c.getContext('2d').putImageData(new ImageData(rgba, w, h), 0, 0);
+  const bmp = await createImageBitmap(await new Promise((res) => c.toBlob(res, 'image/jpeg', q / 100)));
+  const d = document.createElement('canvas'); d.width = w; d.height = h;
+  const x = d.getContext('2d'); x.drawImage(bmp, 0, 0);
+  return { rgba: x.getImageData(0, 0, w, h).data, w, h };
+};
+
+function draw(canvas, r) {
+  canvas.width = r.w; canvas.height = r.h;
+  canvas.getContext('2d').putImageData(new ImageData(r.rgba, r.w, r.h), 0, 0);
+}
+function opts() {
+  const o = { scale: 4, version: $('version').value ? +$('version').value : undefined };
+  for (const id of ids) { o[id] = +$(id).value; $('o_' + id).textContent = $(id).value; }
+  const r = $('renderer').value;
+  o.renderer = r === 'fs+cross' ? 'fs' : r; o.cross = r === 'fs+cross';
+  if (src) Object.assign(o, { lum: src.lum, lw: src.w, lh: src.h });
+  return o;
+}
+function setStatus(s, msg) {
+  $('status').textContent = statusText(s);
+  valid = s.state === 'done' && s.passed === s.total;
+  $('download').disabled = !valid;
+  $('detail').innerHTML = msg || '';
+}
+function render() {
+  designVersion++;                       // any edit makes earlier results stale
+  setStatus({ state: 'unchecked' });
+  clearTimeout(timer);
+  const url = $('url').value, o = opts();
+  try {
+    const classic = renderQr(QRCode, url, { ...o, renderer: 'classic' });
+    draw($('classic'), classic);
+    $('info').textContent = `v${classic.matrix.version}, ${classic.matrix.size} modules, mask ${classic.matrix.mask}, ECC M. Encoded: ${url}`;
+    if (o.renderer !== 'classic' && !src) { setStatus({ state: 'unchecked' }, 'Pick an image first.'); lastRaster = null; return; }
+    lastRaster = renderQr(QRCode, url, o);
+    draw($('photo'), lastRaster);
+  } catch (e) { setStatus({ state: 'unchecked' }, 'Cannot render: ' + e.message); lastRaster = null; return; }
+  const mine = designVersion, raster = lastRaster;
+  timer = setTimeout(async () => {
+    setStatus({ state: 'checking' });
+    const res = await validate(raster, url, decoders, jpeg);
+    if (mine !== designVersion) return;  // edited meanwhile: discard
+    setStatus({ state: 'done', passed: res.passed, total: res.total },
+      res.results.map((r) => `${r.pass ? 'ok' : 'FAIL'}: ${r.name} (${Object.entries(r.per).map(([k, v]) => k + ' ' + (v ? 'ok' : 'no')).join(', ')})`).join('<br>'));
+  }, 700);
+}
+$('download').onclick = () => {
+  if (!valid || !lastRaster) return;
+  $('photo').toBlob((b) => { const a = document.createElement('a'); a.href = URL.createObjectURL(b); a.download = 'qr-code.png'; a.click(); });
+};
+$('file').onchange = async (e) => {
+  const f = e.target.files[0]; if (!f) return;
+  const bmp = await createImageBitmap(f, { imageOrientation: 'from-image' });
+  const k = Math.min(1, 512 / Math.max(bmp.width, bmp.height)), w = Math.round(bmp.width * k), h = Math.round(bmp.height * k);
+  const c = document.createElement('canvas'); c.width = w; c.height = h;
+  const x = c.getContext('2d'); x.fillStyle = '#fff'; x.fillRect(0, 0, w, h); x.drawImage(bmp, 0, 0, w, h);
+  const d = x.getImageData(0, 0, w, h).data, lum = new Float32Array(w * h);
+  for (let i = 0; i < lum.length; i++) lum[i] = (0.2126 * d[i * 4] + 0.7152 * d[i * 4 + 1] + 0.0722 * d[i * 4 + 2]) / 255;
+  src = { lum, w, h }; render();
+};
+for (const id of [...ids, 'url', 'renderer', 'version']) $(id).addEventListener('input', render);
+render();
+</script>
+</body>
+</html>

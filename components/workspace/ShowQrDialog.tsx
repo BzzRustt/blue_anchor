@@ -1,8 +1,9 @@
 'use client'
 
 import Image from 'next/image'
+import Link from 'next/link'
 import { useId, useRef, useState } from 'react'
-import { Check, Copy, DownloadSimple, Scan, ShareNetwork, X } from '@phosphor-icons/react'
+import { Check, Copy, DownloadSimple, PaintBrush, Scan, ShareNetwork, X } from '@phosphor-icons/react'
 
 /**
  * The spec keeps the full QR hidden until "Show QR". Native <dialog>: showModal() traps focus,
@@ -38,6 +39,7 @@ export function ShowQrDialog({ url, code, triggerClassName }: { url: string; cod
           <button type="button" onClick={() => ('share' in navigator ? navigator.share({ title: 'My ScanMe', url }).catch(() => {}) : copy())} className="action-secondary"><ShareNetwork size={18} />Share</button>
           <a href={qr} download={`scanme-${code}.png`} className="action-primary"><DownloadSimple size={18} weight="bold" />Download PNG</a>
         </div>
+        <p className="mt-4 text-center"><Link href="/app/code" className="action-quiet"><PaintBrush size={18} />Personalise QR</Link></p>
       </dialog>
     </>
   )
