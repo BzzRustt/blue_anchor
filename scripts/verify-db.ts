@@ -442,6 +442,16 @@ check('event_set_status allows draft to awaiting_payment but never to published'
 check('another organiser cannot change an event status', (await app.transaction([app`SELECT set_config('request.jwt.claims', ${JSON.stringify({ sub: USER_A })}, true)`, app`SELECT event_set_status(${eventC.eventId}::uuid, 'cancelled') AS ok`]))[1][0].ok === false)
 await asB(app`INSERT INTO event_purchases (event_id, user_id, package_key, capacity, amount_pence, stripe_session_id) VALUES (${eventC.eventId}, ${USER_B}, 'p50', 2, 2900, 'cs_verify_1')`)
 check('an organiser cannot insert a purchase as already paid', await isRejected(() => asB(app`INSERT INTO event_purchases (event_id, user_id, package_key, capacity, amount_pence, status) VALUES (${eventC.eventId}, ${USER_B}, 'p50', 9999, 0, 'paid')`)))
+const [, [ownPending]] = await asB(app`INSERT INTO event_purchases (event_id, user_id, package_key, capacity, amount_pence) VALUES (${eventC.eventId}, ${USER_B}, 'p50', 2, 2900) RETURNING id`)
+const savedSession = await asB(app`UPDATE event_purchases SET stripe_session_id = 'cs_verify_saved' WHERE id = ${ownPending.id} RETURNING id`)
+check('an organiser can save the Stripe session id on their own pending purchase', savedSession[1].length === 1)
+check('an organiser still cannot change a purchase status, capacity or amount', (await Promise.all([
+  isRejected(() => asB(app`UPDATE event_purchases SET status = 'paid' WHERE id = ${ownPending.id}`)),
+  isRejected(() => asB(app`UPDATE event_purchases SET capacity = 9999 WHERE id = ${ownPending.id}`)),
+  isRejected(() => asB(app`UPDATE event_purchases SET amount_pence = 0 WHERE id = ${ownPending.id}`)),
+])).every(Boolean))
+const otherOrganiser = await app.transaction([app`SELECT set_config('request.jwt.claims', ${JSON.stringify({ sub: USER_A })}, true)`, app`UPDATE event_purchases SET stripe_session_id = 'cs_verify_stolen' WHERE id = ${ownPending.id} RETURNING id`])
+check("another organiser cannot touch someone else's purchase", otherOrganiser[1].length === 0)
 check('an organiser cannot self-confirm a purchase', await isRejected(() => asB(app`SELECT confirm_event_purchase('cs_verify_1')`)))
 const confirmed = await visitor`SELECT confirm_event_purchase('cs_verify_1') AS id`
 const again = await visitor`SELECT confirm_event_purchase('cs_verify_1') AS id`

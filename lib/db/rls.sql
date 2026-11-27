@@ -718,6 +718,13 @@ DROP POLICY IF EXISTS event_purchases_insert ON event_purchases;
 CREATE POLICY event_purchases_insert ON event_purchases FOR INSERT TO app_user
   WITH CHECK (user_id = auth.user_id() AND status = 'pending'
               AND EXISTS (SELECT 1 FROM events e WHERE e.id = event_id AND e.user_id = auth.user_id()));
+-- After creating the Stripe session the app saves its id on the purchase. That is the ONLY column an organiser can
+-- change (status, capacity and amount stay webhook-only), and only on their own purchase while it is still pending.
+GRANT UPDATE (stripe_session_id) ON event_purchases TO app_user;
+DROP POLICY IF EXISTS event_purchases_session ON event_purchases;
+CREATE POLICY event_purchases_session ON event_purchases FOR UPDATE TO app_user
+  USING (user_id = auth.user_id() AND status = 'pending')
+  WITH CHECK (user_id = auth.user_id() AND status = 'pending');
 
 -- Organiser moves their own event between draft and awaiting_payment, or cancels it. Never to published.
 CREATE OR REPLACE FUNCTION public.event_set_status(p_event uuid, p_to text)

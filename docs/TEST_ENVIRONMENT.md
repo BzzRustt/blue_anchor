@@ -59,3 +59,14 @@ Test cards and cases are listed in the README (decline `4000 0000 0000 0341`, 3-
 - The wrapper pins the variables listed in `KNOWN` in `scripts/with-test-env.mjs` (all of `.env.example` plus Stripe and Google). A new variable the app reads must be added there, or `.env.local` can supply it to the test run.
 - Photo QR download is gated in the interface only; the PNG is generated in the browser (see README "Photo QR Studio").
 - Refund rule (decided 2026-11-27): a full refund of an event payment returns an unstarted event to draft; a started event stays published. Partial refunds change nothing. Pro follows the subscription, not refunds.
+
+## Webhook forwarding with the Stripe CLI
+
+The stripe account that owns your `sk_test_` key is the one that must receive webhooks. Run the listener with that key (not just the CLI login), and name the events:
+
+```
+$env:STRIPE_API_KEY = "<your sk_test key>"
+stripe listen --events checkout.session.completed,checkout.session.async_payment_succeeded,checkout.session.async_payment_failed,checkout.session.expired,invoice.payment_failed,customer.subscription.updated,customer.subscription.deleted,charge.refunded --forward-to localhost:3000/api/stripe/webhook
+```
+
+`stripe listen --print-secret` with the same key gives the matching `whsec_` for `.env.test.local`.
