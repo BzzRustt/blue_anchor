@@ -16,7 +16,7 @@ import { modeKey } from '@/lib/product'
 const appHost = () => (process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3000').replace(/^https?:\/\//, '').replace(/\/$/, '')
 
 function Group({ title, hint, children }: { title: string; hint: string; children: React.ReactNode }) {
-  return <fieldset className="grid gap-4 border-0 p-0 sm:grid-cols-2"><legend className="sm:col-span-2"><span className="block text-lg font-extrabold tracking-[-.03em]">{title}</span><span className="mt-1 block text-sm font-normal text-[var(--muted)]">{hint}</span></legend>{children}</fieldset>
+  return <fieldset className="grid grid-cols-[minmax(0,1fr)] gap-4 border-0 p-0 sm:grid-cols-2"><legend className="sm:col-span-2"><span className="block text-lg font-extrabold tracking-[-.03em]">{title}</span><span className="mt-1 block text-sm font-normal text-[var(--muted)]">{hint}</span></legend>{children}</fieldset>
 }
 
 const ERRORS: Record<string, string> = {
@@ -44,7 +44,7 @@ export default async function ProfilePage({ searchParams }: { searchParams: Prom
   )
 
   return (
-    <div className="grid gap-7">
+    <div className="grid grid-cols-[minmax(0,1fr)] gap-7">
       <PageIntro eyebrow="Account" title="Profile" body="Fill it out once. Each Mode shows only the details you choose." />
       {query.saved && <p role="status" className="flex items-center gap-2 rounded-xl border border-[var(--accent)] bg-[var(--accent-soft)] p-3 text-sm font-bold"><Check size={18} weight="bold" />Profile saved.</p>}
       {query.error && <p role="alert" className="rounded-xl border border-[color-mix(in_srgb,var(--danger)_32%,var(--line))] p-3 text-sm text-[var(--danger)]">{query.error === 'nickname' && query.detail ? query.detail.slice(0, 120) : ERRORS[query.error] ?? 'Please check your details and try again.'}</p>}
@@ -61,8 +61,8 @@ export default async function ProfilePage({ searchParams }: { searchParams: Prom
         </div>
       </section>
 
-      <div className="grid gap-5 xl:grid-cols-[1fr_320px]">
-        <DirtyForm action={saveProfile} className="soft-card grid gap-8 p-5 sm:p-7">
+      <div className="grid grid-cols-[minmax(0,1fr)] gap-5 xl:grid-cols-[minmax(0,1fr)_320px]">
+        <DirtyForm action={saveProfile} className="soft-card grid grid-cols-[minmax(0,1fr)] gap-8 p-5 sm:p-7">
           <Group title="Personal details" hint="The basics. Your name is always shown on Modes other than Incognito.">
             {input('name', 'Full name', undefined, 'text')}
             <label className="field-label">Nickname <span className="font-normal text-[var(--faint)]">(optional)</span><input className="field-input" name="handle" maxLength={21} defaultValue={owner.handle ?? ''} placeholder="tito.builds" /><span className="text-xs font-normal text-[var(--muted)]">Gives you an easy link to share by typing: {appHost()}/@{owner.handle ?? 'nickname'}. It never works while Incognito is your live Mode. Your QR code doesn’t change.</span></label>
@@ -87,7 +87,7 @@ export default async function ProfilePage({ searchParams }: { searchParams: Prom
           <SaveButton />
         </DirtyForm>
 
-        <aside className="grid content-start gap-4">
+        <aside className="grid grid-cols-[minmax(0,1fr)] content-start gap-4">
           <div className="deep-card p-5">
             <p className="relative text-[11px] font-extrabold uppercase tracking-[.16em] text-[var(--on-deep-muted)]">What visitors see</p>
             <h2 className="relative mt-3 text-xl font-extrabold tracking-[-.03em]">Your information. Your choice.</h2>

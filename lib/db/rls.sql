@@ -793,6 +793,53 @@ $$;
 REVOKE ALL ON FUNCTION public.confirm_event_purchase(text, text) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION public.confirm_event_purchase(text, text) TO visitor_user;
 
+-- Full refund of an event payment. Called only by the signature-verified Stripe webhook. Idempotent.
+-- Rule: before the event starts, it goes back to draft (paying again republishes it), or, if another paid
+-- purchase remains, its capacity drops to the largest remaining one. Once it has started it is left alone,
+-- so attendees keep their event and conversations; only the purchase is marked refunded.
+CREATE OR REPLACE FUNCTION public.refund_event_purchase(p_session text)
+RETURNS uuid
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_purchase event_purchases%ROWTYPE;
+  v_cap integer;
+BEGIN
+  UPDATE event_purchases SET status = 'refunded'
+   WHERE stripe_session_id = p_session AND status = 'paid'
+   RETURNING * INTO v_purchase;
+  IF NOT FOUND THEN RETURN NULL; END IF;
+  SELECT max(capacity) INTO v_cap FROM event_purchases WHERE event_id = v_purchase.event_id AND status = 'paid';
+  UPDATE events SET status = CASE WHEN v_cap IS NULL THEN 'draft' ELSE status END,
+         published_at = CASE WHEN v_cap IS NULL THEN NULL ELSE published_at END,
+         capacity = v_cap, updated_at = now()
+   WHERE id = v_purchase.event_id AND status = 'published' AND starts_at > now();
+  RETURN v_purchase.event_id;
+END;
+$$;
+REVOKE ALL ON FUNCTION public.refund_event_purchase(text) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.refund_event_purchase(text) TO visitor_user;
+
+-- An abandoned checkout (Stripe's checkout.session.expired): the pending purchase can never be paid, so mark it failed.
+CREATE OR REPLACE FUNCTION public.expire_event_purchase(p_session text)
+RETURNS uuid
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE v_id uuid;
+BEGIN
+  UPDATE event_purchases SET status = 'failed'
+   WHERE stripe_session_id = p_session AND status = 'pending'
+   RETURNING id INTO v_id;
+  RETURN v_id;
+END;
+$$;
+REVOKE ALL ON FUNCTION public.expire_event_purchase(text) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.expire_event_purchase(text) TO visitor_user;
+
 -- --------------------------------------------------------------------------
 -- M5: attendee access. The badge QR is NOT a login. An attendee's own access comes from
 -- the registration-device cookie, a personal link (organiser-issued or emailed), or the

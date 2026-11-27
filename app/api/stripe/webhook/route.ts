@@ -31,6 +31,8 @@ export async function POST(request: Request) {
     fetch,
     activatePro: (u, c) => visitorDb.execute(sql`select activate_pro(${u}::text, ${c}::text)`),
     deactivatePro: (c) => visitorDb.execute(sql`select deactivate_pro(${c}::text)`),
+    refundPurchase: (s) => visitorDb.execute(sql`select refund_event_purchase(${s}::text)`),
+    expirePurchase: (s) => visitorDb.execute(sql`select expire_event_purchase(${s}::text)`),
     confirmPurchase: (s, r) => visitorDb.execute(sql`select confirm_event_purchase(${s}::text, ${r}::text)`).then(firstValue),
     confirmPurchaseLegacy: (s) => visitorDb.execute(sql`select confirm_event_purchase(${s}::text)`).then(firstValue),
   })

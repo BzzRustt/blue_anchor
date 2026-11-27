@@ -10,8 +10,11 @@ import { readFileSync, writeFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { Client } from '@neondatabase/serverless'
 
+// The test wrapper sets SCANME_ENV=test: then the URLs go to .env.test.local, never the production .env.local.
+const envFile = process.env.SCANME_ENV === 'test' ? '.env.test.local' : '.env.local'
+
 try {
-  process.loadEnvFile('.env.local')
+  process.loadEnvFile(envFile)
 } catch {
   // Reported below.
 }
@@ -65,7 +68,7 @@ try {
 }
 
 if (!process.exitCode) {
-  const envPath = resolve('.env.local')
+  const envPath = resolve(envFile)
   let contents = readFileSync(envPath, 'utf8')
 
   function setEnv(name, value) {
@@ -80,5 +83,5 @@ if (!process.exitCode) {
   for (const item of credentials) setEnv(item.env, item.url)
   setEnv('DATABASE_URL', credentials.find((item) => item.env === 'APP_DATABASE_URL').url)
   writeFileSync(envPath, contents)
-  console.log('Provisioned app_user, auth_user and visitor_user. Updated .env.local without printing credentials.')
+  console.log(`Provisioned app_user, auth_user and visitor_user. Updated ${envFile} without printing credentials.`)
 }

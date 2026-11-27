@@ -72,7 +72,7 @@ test('pro idempotency key is stable inside a 10-minute window and changes after 
 
 // ---- handleStripeEvent: no network, no database. Stripe is a fake `fetch`, the database is a call log. ----
 type Fake = { calls: string[]; deps: StripeDeps; urls: string[] }
-function fake(opts: { subs?: Record<string, string>; list?: string[]; stripeDown?: boolean; confirm2Error?: unknown; noMatch?: boolean; price?: string } = {}): Fake {
+function fake(opts: { subs?: Record<string, string>; list?: string[]; stripeDown?: boolean; confirm2Error?: unknown; noMatch?: boolean; price?: string; noSession?: boolean } = {}): Fake {
   const calls: string[] = []
   const urls: string[] = []
   const deps: StripeDeps = {
@@ -82,11 +82,14 @@ function fake(opts: { subs?: Record<string, string>; list?: string[]; stripeDown
       assert.equal(init.headers['Stripe-Version'], STRIPE_API_VERSION)
       if (opts.stripeDown) return { ok: false, status: 500, json: async () => ({ error: { type: 'api_error' } }) }
       const m = url.match(/subscriptions\/(sub_\w+)$/)
+      if (url.includes('checkout/sessions?payment_intent=')) return { ok: true, status: 200, json: async () => ({ data: opts.noSession ? [] : [{ id: 'cs_paid' }] }) }
       if (m) return opts.subs?.[m[1]] ? { ok: true, status: 200, json: async () => ({ status: opts.subs![m[1]], items: { data: [{ price: { id: opts.price ?? 'price_pro' } }] } }) } : { ok: false, status: 404, json: async () => ({}) }
       return { ok: true, status: 200, json: async () => ({ data: (opts.list ?? []).map((status) => ({ status, items: { data: [{ price: { id: opts.price ?? 'price_pro' } }] } })) }) }
     },
     activatePro: async (u, c) => { calls.push(`activate ${u} ${c}`) },
     deactivatePro: async (c) => { calls.push(`deactivate ${c}`) },
+    refundPurchase: async (s) => { calls.push(`refund ${s}`) },
+    expirePurchase: async (s) => { calls.push(`expire ${s}`) },
     confirmPurchase: async (s, r) => { calls.push(`confirm2 ${s} ${r}`); if (opts.confirm2Error) throw opts.confirm2Error; return opts.noMatch ? null : 'evt_row' },
     confirmPurchaseLegacy: async (s) => { calls.push(`confirm1 ${s}`); return opts.noMatch ? null : 'evt_row' },
     warn: (m) => { calls.push(`warn ${m}`) },
@@ -233,4 +236,34 @@ test('an event with a different api_version logs one warning and is still proces
   const same = fake()
   await handleStripeEvent({ ...ev('charge.refunded', { id: 'x' }), api_version: STRIPE_API_VERSION }, same.deps)
   assert.deepEqual(same.calls, [])
+})
+
+// Mocked Stripe and database (see docs/TEST_RUN): these prove the decision logic only, not real Stripe delivery.
+test('a full refund looks up the checkout session and refunds that purchase', async () => {
+  const f = fake()
+  const r = await handleStripeEvent(ev('charge.refunded', { id: 'ch_1', refunded: true, payment_intent: 'pi_1' }), f.deps)
+  assert.equal(r.status, 200)
+  assert.deepEqual(f.calls, ['refund cs_paid'])
+})
+test('a partial refund, or a refund with no payment intent, changes nothing', async () => {
+  const f = fake()
+  await handleStripeEvent(ev('charge.refunded', { id: 'ch_1', refunded: false, payment_intent: 'pi_1' }), f.deps)
+  await handleStripeEvent(ev('charge.refunded', { id: 'ch_1', refunded: true }), f.deps)
+  assert.deepEqual(f.calls, [])
+})
+test('a refund for a payment that has no checkout session (e.g. a subscription invoice) refunds nothing', async () => {
+  const f = fake({ noSession: true })
+  assert.equal((await handleStripeEvent(ev('charge.refunded', { refunded: true, payment_intent: 'pi_1' }), f.deps)).status, 200)
+  assert.deepEqual(f.calls, [])
+})
+test('a refund answers 503 so Stripe retries when the session lookup fails', async () => {
+  const f = fake({ stripeDown: true })
+  assert.equal((await handleStripeEvent(ev('charge.refunded', { refunded: true, payment_intent: 'pi_1' }), f.deps)).status, 503)
+  assert.deepEqual(f.calls, [])
+})
+test('an expired one-off checkout marks the purchase abandoned; an expired subscription checkout does nothing', async () => {
+  const f = fake()
+  await handleStripeEvent(ev('checkout.session.expired', { id: 'cs_9', mode: 'payment' }), f.deps)
+  await handleStripeEvent(ev('checkout.session.expired', { id: 'cs_10', mode: 'subscription' }), f.deps)
+  assert.deepEqual(f.calls, ['expire cs_9'])
 })

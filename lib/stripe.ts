@@ -114,11 +114,13 @@ export async function createBillingPortal(customerId: string, returnUrl: string)
   return typeof json?.url === 'string' ? json.url : null
 }
 
-export type StripeEvent = { id?: string; type?: string; api_version?: string; data?: { object?: { id?: string; mode?: string; payment_status?: string; client_reference_id?: string; customer?: string; status?: string; subscription?: string; metadata?: { user_id?: string } } } }
+export type StripeEvent = { id?: string; type?: string; api_version?: string; data?: { object?: { id?: string; mode?: string; payment_status?: string; client_reference_id?: string; customer?: string; status?: string; subscription?: string; payment_intent?: string; refunded?: boolean; metadata?: { user_id?: string } } } }
 export type StripeAction =
   | { kind: 'activate_pro'; userId: string; customerId: string; subscriptionId: string }
   | { kind: 'confirm_purchase'; sessionId: string; ref?: string }
   | { kind: 'deactivate_pro'; customerId: string }
+  | { kind: 'refund_purchase'; paymentIntentId: string }
+  | { kind: 'expire_purchase'; sessionId: string }
   | { kind: 'log_failure'; message: string }
   | { kind: 'ignore' }
 
@@ -141,6 +143,12 @@ export function decideStripeAction(event: StripeEvent): StripeAction {
     case 'invoice.payment_failed':
       // Safe line only: event id and type, no customer or card details. Pro is NOT removed: past_due keeps Pro while Stripe retries.
       return { kind: 'log_failure', message: `[stripe] ${event.type} event ${event.id ?? '-'}` }
+    case 'checkout.session.expired':
+      // Abandoned one-off checkout. A subscription session that expires never granted anything.
+      return o?.id && o.mode !== 'subscription' ? { kind: 'expire_purchase', sessionId: o.id } : { kind: 'ignore' }
+    case 'charge.refunded':
+      // Only a FULL refund withdraws an event purchase; partial refunds change nothing. Pro is governed by the subscription, not refunds.
+      return o?.refunded === true && o.payment_intent ? { kind: 'refund_purchase', paymentIntentId: o.payment_intent } : { kind: 'ignore' }
     case 'customer.subscription.deleted':
       return o?.customer ? { kind: 'deactivate_pro', customerId: o.customer } : { kind: 'ignore' }
     case 'customer.subscription.updated':
@@ -195,6 +203,14 @@ export async function customerHasLiveSubscription(customerId: string, key: strin
   })
 }
 
+/** The checkout session that took this payment: its id, '' if there is none, null if Stripe could not be asked. */
+export async function sessionIdForPaymentIntent(paymentIntentId: string, key: string, fetchImpl: FetchLike = fetch as unknown as FetchLike): Promise<string | null> {
+  const j = await stripeGet(`checkout/sessions?payment_intent=${encodeURIComponent(paymentIntentId)}&limit=1`, key, fetchImpl)
+  if (!j || !Array.isArray(j.data)) return null
+  const first = j.data[0] as { id?: string } | undefined
+  return first?.id ?? ''
+}
+
 /** SQLSTATE 42883 (undefined function) on the error or a nested cause, and a message that names confirm_event_purchase. */
 export function isUndefinedFunction(err: unknown): boolean {
   let code = false
@@ -214,6 +230,10 @@ export type StripeDeps = {
   deactivatePro: (customerId: string) => Promise<unknown>
   /** 2-argument SQL function (session id + our purchase id). */
   confirmPurchase: (sessionId: string, ref: string | null) => Promise<string | null>
+  /** Full refund of an event payment, by checkout session id. */
+  refundPurchase: (sessionId: string) => Promise<unknown>
+  /** Abandoned checkout, by checkout session id. */
+  expirePurchase: (sessionId: string) => Promise<unknown>
   /** Original 1-argument function, used until the new SQL is applied. */
   confirmPurchaseLegacy: (sessionId: string) => Promise<string | null>
   warn?: (message: string) => void
@@ -257,6 +277,15 @@ export async function handleStripeEvent(event: StripeEvent, deps: StripeDeps): P
         id = await deps.confirmPurchaseLegacy(action.sessionId)
       }
       if (!id) (deps.warn ?? console.warn)(`[stripe] paid checkout session matched no pending purchase (already confirmed or not found): ${action.sessionId}`)
+      break
+    }
+    case 'expire_purchase':
+      await deps.expirePurchase(action.sessionId)
+      break
+    case 'refund_purchase': {
+      const sessionId = await sessionIdForPaymentIntent(action.paymentIntentId, deps.secretKey, deps.fetch)
+      if (sessionId === null) return retry
+      if (sessionId) await deps.refundPurchase(sessionId)
       break
     }
     case 'log_failure':

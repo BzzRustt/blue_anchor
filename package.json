@@ -20,7 +20,7 @@
     "demo:delete": "node scripts/demo-data.ts delete",
     "test:check": "node scripts/with-test-env.mjs --check",
     "test:dev": "node scripts/with-test-env.mjs next dev",
-    "test:migrate": "node scripts/with-test-env.mjs drizzle-kit migrate && node scripts/with-test-env.mjs node scripts/apply-rls.mjs",
+    "test:migrate": "node scripts/db-setup-isolated.mjs",
     "test:seed": "node scripts/with-test-env.mjs node scripts/demo-data.ts seed",
     "test:unseed": "node scripts/with-test-env.mjs node scripts/demo-data.ts delete",
     "test:verify": "node scripts/with-test-env.mjs node scripts/verify-db.ts"

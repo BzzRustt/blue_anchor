@@ -36,7 +36,7 @@ ScanMe is a multi-owner QR networking product. An owner creates a permanent code
 
 Env var names (values live only in your host and `.env.local`, never in git): `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_PRO_PRICE_ID`.
 
-Webhook endpoint `/api/stripe/webhook`. In the Stripe dashboard subscribe it to: `checkout.session.completed`, `checkout.session.async_payment_succeeded`, `checkout.session.async_payment_failed`, `invoice.payment_failed`, `customer.subscription.updated`, `customer.subscription.deleted`.
+Webhook endpoint `/api/stripe/webhook`. In the Stripe dashboard subscribe it to: `checkout.session.completed`, `checkout.session.async_payment_succeeded`, `checkout.session.async_payment_failed`, `invoice.payment_failed`, `customer.subscription.updated`, `customer.subscription.deleted`, `checkout.session.expired` (abandoned event checkout is marked failed) and `charge.refunded` (a full refund of an event payment: before the event starts it returns to draft and can be paid for again; once started it stays as it is; the purchase is marked refunded either way; partial refunds and Pro refunds change nothing, Pro follows the subscription).
 
 Also switch on Stripe's customer emails in the dashboard (successful payments, refunds, and the subscription emails under Billing) so Pro subscribers get receipts. One-off event payments already request a Stripe invoice. Tax/VAT is not configured in code; decide that with your accountant first.
 

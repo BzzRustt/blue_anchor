@@ -16,6 +16,9 @@ import { spawnSync } from 'node:child_process'
 
 const FILE = process.env.SCANME_TEST_ENV_FILE ?? '.env.test.local'
 const args = process.argv.slice(2)
+// --bootstrap: only the owner URL is needed (before the runtime roles exist).
+const bootstrap = args[0] === '--bootstrap'
+if (bootstrap) args.shift()
 const checkOnly = args[0] === '--check'
 
 const maskHost = (h) => `${h.slice(0, 6)}…${h.slice(h.lastIndexOf('.') - 2)}`
@@ -62,6 +65,7 @@ if (!allowedHosts.length) fail('SCANME_TEST_DB_HOSTS is empty. List the hostname
 
 const DB_NAMES = ['DATABASE_OWNER_URL', 'DATABASE_URL', 'APP_DATABASE_URL', 'AUTH_DATABASE_URL', 'VISITOR_DATABASE_URL']
 for (const name of DB_NAMES) {
+  if (!values[name] && bootstrap && name !== 'DATABASE_OWNER_URL') continue
   if (!values[name]) fail(`${name} is empty in ${FILE}.`)
   let host
   try { host = new URL(values[name]).hostname.toLowerCase() } catch { fail(`${name} is not a valid URL.`) }

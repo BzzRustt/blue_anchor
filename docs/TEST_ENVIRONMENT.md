@@ -1,6 +1,6 @@
 # Isolated test environment
 
-A separate Neon **test branch**, test-mode Stripe, and captured email. It never touches production data, live keys, or real inboxes.
+A separate, empty Neon **project** (not a branch of production), test-mode Stripe, and captured email. It never touches production data, live keys, or real inboxes.
 
 ## Why it is separate
 
@@ -16,7 +16,7 @@ A separate Neon **test branch**, test-mode Stripe, and captured email. It never 
 
 ## One-time setup
 
-1. In Neon, create a **branch** of the project (not the production branch). Copy its hostname(s) into `SCANME_TEST_DB_HOSTS` and its connection strings into the five `DATABASE_*` / `*_DATABASE_URL` lines of `.env.test.local`. Compare the hostname with production in Neon first; they must differ.
+1. In Neon, create a NEW empty project (`neon projects create --name scanme-test`); do not branch production, because a branch copies live data. Copy its hostname(s) into `SCANME_TEST_DB_HOSTS` and its connection strings into the five `DATABASE_*` / `*_DATABASE_URL` lines of `.env.test.local`. Compare the hostname with production in Neon first; they must differ.
 2. `cp .env.test.example .env.test.local` (Windows: copy the file). Fill in the values. Generate `SESSION_SECRET` and `BETTER_AUTH_SECRET` fresh, e.g. `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`.
 3. Stripe (test mode only): copy the `sk_test_` key, create a monthly test price (`price_...`), save a Customer Portal configuration in test mode, then run `stripe login` once.
 4. `npm run test:check`. It confirms the database hosts, the key prefixes, and (with a test key and price set) that Stripe reports the price as test mode. It moves no money.
@@ -24,7 +24,7 @@ A separate Neon **test branch**, test-mode Stripe, and captured email. It never 
 ## Migrations, seed, run
 
 ```
-npm run test:migrate      # drizzle migrations, then RLS policies, on the TEST branch only
+npm run test:migrate      # FRESH empty test database only: schema push, hand-written migrations 0002-0008, RLS, runtime role logins
 npm run test:verify       # database checks (scripts/verify-db.ts)
 npm run test:seed         # synthetic users, modes, events, attendees, messages, shop interests
 npm run test:dev          # the app on http://localhost:3000 against the test branch
@@ -58,4 +58,4 @@ Test cards and cases are listed in the README (decline `4000 0000 0000 0341`, 3-
 - Google sign-in is optional: it appears only when `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` are set in `.env.test.local`. Use a separate test OAuth client, never the production one.
 - The wrapper pins the variables listed in `KNOWN` in `scripts/with-test-env.mjs` (all of `.env.example` plus Stripe and Google). A new variable the app reads must be added there, or `.env.local` can supply it to the test run.
 - Photo QR download is gated in the interface only; the PNG is generated in the browser (see README "Photo QR Studio").
-- Refunds and abandoned checkouts are not handled by the app; see `docs/TEST_RUN_2026-11-26.md` once written.
+- Refund rule (decided 2026-11-27): a full refund of an event payment returns an unstarted event to draft; a started event stays published. Partial refunds change nothing. Pro follows the subscription, not refunds.

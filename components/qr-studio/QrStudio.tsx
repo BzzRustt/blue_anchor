@@ -268,7 +268,7 @@ export function QrStudio({ url, photoLocked = false }: { url: string; photoLocke
   )
 
   return (
-    <div className="grid gap-4 lg:grid-cols-[290px_minmax(0,1fr)_300px] lg:items-start lg:gap-6">
+    <div className="grid grid-cols-[minmax(0,1fr)] gap-4 lg:grid-cols-[290px_minmax(0,1fr)_300px] lg:items-start lg:gap-6">
       {preview}
       {controls}
       {checks}

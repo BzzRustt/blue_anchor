@@ -14,7 +14,7 @@ export function AccountLinks() {
   if (!isPending && data) return <Link className="action-primary" href="/app"><ArrowLeft size={17} weight="bold" />Back to ScanMe</Link>
   return (
     <>
-      <Link className="action-quiet hidden sm:inline-flex" href="/login">Log in</Link>
+      <Link className="action-quiet max-[420px]:!hidden" href="/login">Log in</Link>
       <Link className="action-primary" href="/signup">Sign up</Link>
     </>
   )

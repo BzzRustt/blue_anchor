@@ -12,11 +12,11 @@ export function PhotoUpload({ action }: { action: (formData: FormData) => void |
   const [problem, setProblem] = useState('')
   const [busy, setBusy] = useState(false)
   return (
-    <form action={action} onSubmit={() => setBusy(true)} className="grid gap-2">
+    <form action={action} onSubmit={() => setBusy(true)} className="grid grid-cols-[minmax(0,1fr)] gap-2">
       <div className="flex flex-wrap items-center gap-2">
         <label className="sr-only" htmlFor="photo">Choose a photo</label>
         <input
-          id="photo" className="field-input !w-auto text-sm" type="file" name="photo" accept="image/jpeg,image/png,image/webp" required
+          id="photo" className="field-input !w-auto min-w-0 max-w-full text-sm" type="file" name="photo" accept="image/jpeg,image/png,image/webp" required
           onChange={(e) => {
             const file = e.target.files?.[0]
             setProblem(file && file.size > PHOTO_MAX_BYTES ? `That photo is ${(file.size / 1048576).toFixed(1)} MB. The limit is ${PHOTO_MAX_BYTES / 1048576} MB: choose a smaller one.` : '')

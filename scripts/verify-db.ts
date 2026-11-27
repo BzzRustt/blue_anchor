@@ -449,6 +449,35 @@ const [published] = await admin`SELECT status, capacity FROM events WHERE id = $
 check('the webhook function publishes with the purchased capacity, once', confirmed[0].id === eventC.eventId && again[0].id === null && published.status === 'published' && published.capacity === 2, JSON.stringify(published))
 check('a published event is reachable and reports its capacity', (await visitor`SELECT capacity FROM join_event_info('verify-event-c')`)[0]?.capacity === 2)
 
+// Refunds and abandoned checkouts. The event's start time is moved around, then restored.
+const [{ starts_at: originalStart }] = await admin`SELECT starts_at FROM events WHERE id = ${eventC.eventId}`
+await admin`UPDATE events SET starts_at = now() + interval '7 days' WHERE id = ${eventC.eventId}`
+check('an organiser cannot refund a purchase themselves', await isRejected(() => asB(app`SELECT refund_event_purchase('cs_verify_1')`)))
+const refunded = await visitor`SELECT refund_event_purchase('cs_verify_1') AS id`
+const refundedAgain = await visitor`SELECT refund_event_purchase('cs_verify_1') AS id`
+const [afterRefund] = await admin`SELECT e.status, e.published_at, p.status AS purchase FROM events e JOIN event_purchases p ON p.event_id = e.id WHERE e.id = ${eventC.eventId} AND p.stripe_session_id = 'cs_verify_1'`
+check('a full refund before the event starts returns it to draft and marks the purchase refunded, once',
+  refunded[0].id === eventC.eventId && refundedAgain[0].id === null && afterRefund.status === 'draft' && afterRefund.published_at === null && afterRefund.purchase === 'refunded', JSON.stringify(afterRefund))
+check('a refunded event is invisible to attendees again', (await visitor`SELECT 1 FROM join_event_info('verify-event-c')`).length === 0)
+// A replayed payment confirmation must not bring a refunded purchase back.
+check('a replayed confirmation cannot revive a refunded purchase', (await visitor`SELECT confirm_event_purchase('cs_verify_1') AS id`)[0].id === null)
+// A refund after the event has started leaves the event published.
+await admin`UPDATE event_purchases SET status = 'paid' WHERE stripe_session_id = 'cs_verify_1'`
+await admin`UPDATE events SET status = 'published', capacity = 2, published_at = now(), starts_at = now() - interval '1 hour' WHERE id = ${eventC.eventId}`
+await visitor`SELECT refund_event_purchase('cs_verify_1')`
+const [afterLateRefund] = await admin`SELECT e.status, e.capacity, p.status AS purchase FROM events e JOIN event_purchases p ON p.event_id = e.id WHERE e.id = ${eventC.eventId} AND p.stripe_session_id = 'cs_verify_1'`
+check('a refund after the event has started leaves it published', afterLateRefund.status === 'published' && afterLateRefund.capacity === 2 && afterLateRefund.purchase === 'refunded', JSON.stringify(afterLateRefund))
+// Abandoned checkout.
+await asB(app`INSERT INTO event_purchases (event_id, user_id, package_key, capacity, amount_pence, stripe_session_id) VALUES (${eventC.eventId}, ${USER_B}, 'p50', 2, 2900, 'cs_verify_expired')`)
+check('an organiser cannot expire a purchase themselves', await isRejected(() => asB(app`SELECT expire_event_purchase('cs_verify_expired')`)))
+const expired = await visitor`SELECT expire_event_purchase('cs_verify_expired') AS id`
+const expiredAgain = await visitor`SELECT expire_event_purchase('cs_verify_expired') AS id`
+const [expiredRow] = await admin`SELECT status FROM event_purchases WHERE stripe_session_id = 'cs_verify_expired'`
+check('an abandoned checkout is marked failed, once, and a later payment cannot confirm it',
+  expired[0].id !== null && expiredAgain[0].id === null && expiredRow.status === 'failed' && (await visitor`SELECT confirm_event_purchase('cs_verify_expired') AS id`)[0].id === null)
+// Restore what the later checks expect: a published event with its original start.
+await admin`UPDATE events SET status = 'published', capacity = 2, starts_at = ${originalStart} WHERE id = ${eventC.eventId}`
+
 // M5: attendee access. The badge QR is not a login; access comes from personal links.
 const { createHash } = await import('node:crypto')
 const sha = (t: string) => createHash('sha256').update(t, 'utf8').digest('hex')
