@@ -27,9 +27,10 @@
   --on-deep: #ffffff;
   --on-deep-muted: #c3d2c8;
   --terra: #ae7458;
-  --side: #fcfcf9;
-  --side-hover: #e8eee4;
-  --side-ink: #4f5d53;
+  /* Deep pine navigation with a lime active item, from the picture-inspired prototype. */
+  --side: #103d30;
+  --side-hover: rgba(255, 255, 255, 0.09);
+  --side-ink: #d6e4da;
   --side-active: #15362d;
   --danger: #932c39;
   --warning: #8d641d;
@@ -58,10 +59,10 @@ html[data-theme='dark'] {
   --on-deep: #ffffff;
   --on-deep-muted: #c3d2c8;
   --terra: #d39a7d;
-  --side: #121f19;
-  --side-hover: #1f3329;
-  --side-ink: #a9b8ad;
-  --side-active: #eef2ea;
+  --side: #0d2d23;
+  --side-hover: rgba(255, 255, 255, 0.09);
+  --side-ink: #cfdcd2;
+  --side-active: #15362d;
   --danger: #f19aa4;
   --warning: #dfb56c;
   --shadow: 0 26px 70px rgba(0, 0, 0, 0.4);

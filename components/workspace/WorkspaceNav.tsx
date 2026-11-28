@@ -36,8 +36,8 @@ export function WorkspaceNav({ mobile = false, unread = 0 }: { mobile?: boolean;
             href={item.href}
             aria-current={active ? 'page' : undefined}
             className={mobile
-              ? `relative grid min-h-[52px] place-items-center gap-0.5 rounded-lg px-1 py-1.5 text-[11px] font-bold ${active ? 'bg-[var(--side-hover)] text-[var(--side-active)]' : 'text-[var(--side-ink)]'}`
-              : `flex min-h-11 items-center gap-3 rounded-[9px] px-3 text-sm ${active ? 'bg-[var(--side-hover)] font-extrabold text-[var(--side-active)]' : 'font-semibold text-[var(--side-ink)] hover:bg-[var(--side-hover)] hover:text-[var(--side-active)]'}`}
+              ? `relative grid min-h-[52px] place-items-center gap-0.5 rounded-lg px-1 py-1.5 text-[11px] font-bold ${active ? 'bg-[var(--lime)] text-[var(--side-active)]' : 'text-[var(--side-ink)]'}`
+              : `flex min-h-11 items-center gap-3 rounded-[9px] px-3 text-sm ${active ? 'bg-[var(--lime)] font-extrabold text-[var(--side-active)]' : 'font-semibold text-[var(--side-ink)] hover:bg-[var(--side-hover)] hover:text-white'}`}
           >
             <Icon size={mobile ? 21 : 19} weight={active ? 'bold' : 'regular'} />
             <span>{item.label}</span>

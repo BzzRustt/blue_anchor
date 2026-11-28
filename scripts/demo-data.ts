@@ -12,7 +12,9 @@
  */
 import { randomBytes } from 'node:crypto'
 import { writeFileSync } from 'node:fs'
+import { readFile } from 'node:fs/promises'
 import { neon } from '@neondatabase/serverless'
+import sharp from 'sharp'
 import { hashPassword } from 'better-auth/crypto'
 import { buildBlocks, parseModeConfig, type ModeKey } from '../lib/modes.ts'
 import { newAccessToken } from '../lib/attendee-access.ts'
@@ -314,7 +316,24 @@ async function deleteAll(dry: boolean) {
   console.log(Object.values(after).every((v) => v === 0) ? 'All demo data deleted.' : `Something was left: ${JSON.stringify(after)}`)
 }
 
+/** Gives each demo event a cover from the site's own photography. Safe to run again; deleting the demo accounts removes the covers too. */
+const COVERS: Record<string, string> = { 'Demo Founders Summit': 'event-badges', 'Demo Product Breakfast': 'event-table-cards', 'Demo Design Night': 'code-cards', 'Demo Old Meetup': 'tap-scan-tags', 'Demo Supper Club': 'patch-kit' }
+async function addCovers() {
+  const events = await rows(`select id, name from events where id in (${DEMO_EVENTS})`)
+  let n = 0
+  for (const e of events) {
+    const file = COVERS[String(e.name)]
+    if (!file) continue
+    const webp = await sharp(await readFile(`public/images/shop/${file}.webp`)).resize(1280, 640, { fit: 'cover' }).webp({ quality: 80 }).toBuffer()
+    await rows(`insert into event_covers (event_id, mime, bytes, updated_at) values ($1::uuid, 'image/webp', decode($2, 'base64'), now()) on conflict (event_id) do update set bytes = excluded.bytes, updated_at = now()`, [e.id, webp.toString('base64')])
+    await rows(`update events set cover_url = $2 where id = $1::uuid`, [e.id, `/api/event-cover/${e.id}?v=${Date.now()}`])
+    n++
+  }
+  console.log(`Covers set on ${n} demo events.`)
+}
+
 const command = process.argv[2]
-if (command === 'seed') await seedAll()
+if (command === 'seed') { await seedAll(); await addCovers() }
+else if (command === 'covers') await addCovers()
 else if (command === 'delete') await deleteAll(process.argv.includes('--dry'))
-else { console.error('Usage: node scripts/demo-data.ts seed | delete [--dry]'); process.exit(1) }
+else { console.error('Usage: node scripts/demo-data.ts seed | covers | delete [--dry]'); process.exit(1) }

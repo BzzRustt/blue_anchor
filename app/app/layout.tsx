@@ -20,15 +20,15 @@ export default async function WorkspaceLayout({ children }: { children: React.Re
 
   return (
     <div className="min-h-dvh lg:grid lg:grid-cols-[236px_1fr]">
-      <aside className="hidden min-h-dvh border-r border-[var(--line)] bg-[var(--side)] px-5 pb-5 pt-8 lg:sticky lg:top-0 lg:flex lg:h-dvh lg:flex-col lg:gap-9">
-        <Link href="/" className="block w-fit rounded-md" aria-label="ScanMe home"><Brand /></Link>
+      <aside className="hidden min-h-dvh bg-[var(--side)] px-5 pb-5 pt-8 lg:sticky lg:top-0 lg:flex lg:h-dvh lg:flex-col lg:gap-9">
+        <Link href="/" className="block w-fit rounded-md" aria-label="ScanMe home"><Brand inverse /></Link>
         <WorkspaceNav unread={unread} />
-        <div className="mt-auto grid gap-1 border-t border-[var(--line)] pt-3">
+        <div className="mt-auto grid gap-1 border-t border-white/15 pt-3 text-[var(--side-ink)]">
           <Link href="/app/profile" className="flex items-center gap-3 rounded-[9px] p-2 hover:bg-[var(--side-hover)]">
-            <span className="relative grid h-9 w-9 shrink-0 place-items-center overflow-hidden rounded-full bg-[var(--surface-muted)] text-xs font-extrabold text-[var(--accent)]">{owner?.image ? <Image src={owner.image} alt="" fill sizes="36px" className="object-cover" unoptimized /> : initials}</span>
-            <span className="min-w-0 text-sm font-bold leading-tight"><span className="block truncate">{name}</span><span className="block text-xs font-normal text-[var(--muted)]">{planLabel} account</span></span>
+            <span className="relative grid h-9 w-9 shrink-0 place-items-center overflow-hidden rounded-full bg-[var(--lime)] text-xs font-extrabold text-[var(--on-lime)]">{owner?.image ? <Image src={owner.image} alt="" fill sizes="36px" className="object-cover" unoptimized /> : initials}</span>
+            <span className="min-w-0 text-sm font-bold leading-tight text-white"><span className="block truncate">{name}</span><span className="block text-xs font-normal text-[var(--side-ink)]">{planLabel} account</span></span>
           </Link>
-          <SignOutButton />
+          <SignOutButton onDark />
         </div>
       </aside>
 
@@ -45,7 +45,7 @@ export default async function WorkspaceLayout({ children }: { children: React.Re
         <main className="mx-auto w-full max-w-[1180px] p-4 sm:p-7 lg:px-11 lg:py-9">{children}</main>
       </div>
 
-      <div className="fixed inset-x-0 bottom-0 z-40 border-t border-[var(--line)] bg-[color-mix(in_srgb,var(--side)_96%,transparent)] shadow-[0_-8px_25px_rgba(26,41,27,.05)] backdrop-blur-xl lg:hidden"><WorkspaceNav mobile unread={unread} /></div>
+      <div className="fixed inset-x-0 bottom-0 z-40 border-t border-white/10 bg-[var(--side)] shadow-[0_-8px_25px_rgba(26,41,27,.12)] backdrop-blur-xl lg:hidden"><WorkspaceNav mobile unread={unread} /></div>
     </div>
   )
 }
