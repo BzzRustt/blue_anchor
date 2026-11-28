@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { ALLOWED_SHOW, buildBlocks, defaultConfig, MODE_INFO, MODE_KEYS, parseModeConfig, safeHttpUrl, visitorLinks, type OwnerProfile } from './modes.ts'
+import { ALLOWED_SHOW, buildBlocks, countShownLinks, defaultConfig, isLinkField, MODE_INFO, MODE_KEYS, parseModeConfig, safeHttpUrl, visitorLinks, type OwnerProfile } from './modes.ts'
+import { canAddSocialLink } from './plans.ts'
 
 const owner: OwnerProfile = {
   name: 'Amara Cole', image: 'https://x.test/a.png', bio: 'Designer', role: 'Designer', company: 'Fieldwork',
@@ -90,4 +91,27 @@ test('blocks: single choice needs two options, switching off removes the block',
 test('blocks: creator poll needs a prompt and two options', () => {
   const cfg = parseModeConfig('creator', { creator: { poll: { on: true, prompt: 'Which city?', options: ['Lagos', 'London'] }, collab: false } })
   assert.deepEqual(buildBlocks('creator', cfg).map((b) => b.type), ['choice'])
+})
+
+test('every Mode explains itself, and new Free defaults fit the one-link limit', () => {
+  for (const key of MODE_KEYS) {
+    assert.ok(MODE_INFO[key].bestFor.length > 10)
+    assert.ok(MODE_INFO[key].rules.length >= 2)
+  }
+  for (const key of ['basic', 'networking', 'incognito'] as const) assert.ok(countShownLinks(defaultConfig(key).show) <= 1, key)
+})
+
+test('link fields are the accounts and sites, not photo, bio or role', () => {
+  assert.equal(isLinkField('instagram'), true)
+  assert.equal(isLinkField('website'), true)
+  assert.equal(isLinkField('bio'), false)
+  assert.equal(isLinkField('photo'), false)
+})
+
+test('Free may show one link, Pro as many as the Mode offers', () => {
+  const show = { instagram: true, linkedin: true, tiktok: true }
+  assert.equal(countShownLinks(show), 3)
+  assert.equal(canAddSocialLink('free', countShownLinks(show) - 1).ok, false)
+  assert.equal(canAddSocialLink('free', countShownLinks({ instagram: true }) - 1).ok, true)
+  assert.equal(canAddSocialLink('pro', countShownLinks(show) - 1).ok, true)
 })

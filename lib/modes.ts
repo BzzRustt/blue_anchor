@@ -11,12 +11,37 @@ export type ModeKey = (typeof MODE_KEYS)[number]
 
 export const isModeKey = (value: string): value is ModeKey => (MODE_KEYS as readonly string[]).includes(value)
 
-export const MODE_INFO: Record<ModeKey, { name: string; blurb: string; pro: boolean; sees: string; does: string }> = {
-  basic: { name: 'Basic', blurb: 'A simple introduction with one casual question.', pro: false, sees: 'Your name, photo, short bio and the social links you choose.', does: 'Answer one question and leave an optional message.' },
-  networking: { name: 'Networking', blurb: 'A professional introduction people can reply to.', pro: false, sees: 'Your role, company, bio, what you look for and can offer, and professional links.', does: 'Send you a short introduction with an optional way to reach them.' },
-  incognito: { name: 'Incognito', blurb: 'Collect answers without showing who you are.', pro: false, sees: 'Nothing about you: no name, photo, bio, company or accounts.', does: 'Answer one question and leave an optional message.' },
-  creator: { name: 'Creator', blurb: 'Point people to what you are making.', pro: true, sees: 'Your photo, bio, social buttons, one featured item and up to three links.', does: 'Open your featured item, follow your links, vote in a poll or send a collaboration enquiry.' },
-  portfolio: { name: 'Portfolio', blurb: 'Show your work and invite enquiries.', pro: true, sees: 'Your introduction and up to three projects, in a Professional or Visual layout.', does: 'Open a project or send you an enquiry.' },
+export const MODE_INFO: Record<ModeKey, { name: string; blurb: string; pro: boolean; sees: string; does: string; bestFor: string; rules: string[] }> = {
+  basic: {
+    name: 'Basic', blurb: 'A simple introduction with one casual question.', pro: false,
+    sees: 'Your name, photo, short bio and the link you choose.', does: 'Answer one question and leave an optional message.',
+    bestFor: 'Everyday sharing: a jacket, a tote, a lanyard, a friendly hello.',
+    rules: ['Free: show one link (Instagram, LinkedIn, TikTok, YouTube, Spotify or your website). Pro: show as many as you like.', 'One question of your choice, plus an optional message box.', 'Replies come to your inbox. Visitors never get your email.'],
+  },
+  networking: {
+    name: 'Networking', blurb: 'A professional introduction people can reply to.', pro: false,
+    sees: 'Your role, company, bio, what you look for and can offer, and your professional link.', does: 'Send you a short introduction with an optional way to reach them.',
+    bestFor: 'Conferences, meetups and anywhere you want useful introductions.',
+    rules: ['Free: show one link (LinkedIn or your website). Pro: show both.', 'Visitors give their name and a short introduction; it is not open chat.', 'Rate limits, reporting and blocking protect you from spam.'],
+  },
+  incognito: {
+    name: 'Incognito', blurb: 'Collect answers without showing who you are.', pro: false,
+    sees: 'Nothing about you: no name, photo, bio, company or accounts.', does: 'Answer one question and leave an optional message.',
+    bestFor: 'Honest feedback, polls and questions where you want to stay anonymous.',
+    rules: ['Your name, photo, bio and links are never shown, on any plan.', 'One question, plus an optional message box.', 'Answers still arrive in your private inbox.'],
+  },
+  creator: {
+    name: 'Creator', blurb: 'Point people to what you are making.', pro: true,
+    sees: 'Your photo, bio, social buttons, one featured item and up to three links.', does: 'Open your featured item, follow your links, vote in a poll or send a collaboration enquiry.',
+    bestFor: 'Makers, musicians and artists with a new release or a shop to share.',
+    rules: ['Pro only. Show all your social links.', 'One featured item at a time, up to three extra links, an optional poll and an enquiry box.', 'Link clicks are counted in your insights.'],
+  },
+  portfolio: {
+    name: 'Portfolio', blurb: 'Show your work and invite enquiries.', pro: true,
+    sees: 'Your introduction and up to three projects, in a Professional or Visual layout.', does: 'Open a project or send you an enquiry.',
+    bestFor: 'Designers, photographers, consultants and freelancers looking for work.',
+    rules: ['Pro only. Show all your professional links.', 'Up to three projects, in a Professional (text cards) or Visual (large images) layout.', 'Enquiries arrive with an optional way to reach the sender.'],
+  },
 }
 
 export const SHOW_FIELDS = ['photo', 'bio', 'role', 'company', 'interests', 'looking', 'offer', 'instagram', 'linkedin', 'tiktok', 'youtube', 'spotify', 'website', 'portfolio'] as const
@@ -26,6 +51,13 @@ export const SHOW_LABELS: Record<ShowField, string> = {
   photo: 'Photo', bio: 'Short bio', role: 'Role', company: 'Company', interests: 'Interests', looking: 'What I am looking for', offer: 'What I can offer',
   instagram: 'Instagram', linkedin: 'LinkedIn', tiktok: 'TikTok', youtube: 'YouTube', spotify: 'Spotify', website: 'Website', portfolio: 'Portfolio link',
 }
+
+/** The profile fields that are links to your accounts or sites. Free plans may show only one of these at a time. */
+export const LINK_FIELDS = ['instagram', 'linkedin', 'tiktok', 'youtube', 'spotify', 'website', 'portfolio'] as const satisfies readonly ShowField[]
+export const isLinkField = (field: ShowField) => (LINK_FIELDS as readonly string[]).includes(field)
+
+/** How many link fields are ticked in a Mode's show settings. */
+export const countShownLinks = (show: Partial<Record<ShowField, boolean>>) => LINK_FIELDS.filter((field) => show[field] === true).length
 
 /** Which profile fields each Mode may show. Incognito may show none: that is the point. */
 export const ALLOWED_SHOW: Record<ModeKey, readonly ShowField[]> = {
@@ -37,7 +69,7 @@ export const ALLOWED_SHOW: Record<ModeKey, readonly ShowField[]> = {
 }
 
 const DEFAULT_SHOW: Record<ModeKey, readonly ShowField[]> = {
-  basic: ['photo', 'bio', 'instagram', 'linkedin'],
+  basic: ['photo', 'bio', 'instagram'],
   networking: ['photo', 'role', 'company', 'bio', 'looking', 'offer', 'linkedin'],
   incognito: [],
   creator: ['photo', 'bio', 'instagram', 'tiktok', 'youtube', 'spotify'],

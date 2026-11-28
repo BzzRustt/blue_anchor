@@ -6,8 +6,8 @@ import { redirect } from 'next/navigation'
 import { headers } from 'next/headers'
 import { auth } from '@/lib/auth-server'
 import { schema, withOwnerDb } from '@/lib/db'
-import { ALLOWED_SHOW, buildBlocks, defaultConfig, isModeKey, MODE_INFO, parseModeConfig, type ModeConfig, type ModeKey } from '@/lib/modes'
-import { canActivateMode, type Plan } from '@/lib/plans'
+import { ALLOWED_SHOW, buildBlocks, countShownLinks, defaultConfig, isLinkField, isModeKey, MODE_INFO, parseModeConfig, type ModeConfig, type ModeKey, type ShowField } from '@/lib/modes'
+import { canActivateMode, canAddSocialLink, type Plan } from '@/lib/plans'
 import { personalCodeIds } from '@/lib/product'
 
 async function owner() {
@@ -21,7 +21,9 @@ const lines = (form: FormData, key: string) => text(form, key).split(/\r?\n/).ma
 
 /** Reads the editor form into a raw config; parseModeConfig then bounds and sanitises everything. */
 function readConfig(mode: ModeKey, form: FormData) {
-  const show = Object.fromEntries(ALLOWED_SHOW[mode].map((field) => [field, form.has(`show_${field}`)]))
+  // Free accounts pick their one link with a radio (`link_pick`); everything else is a checkbox.
+  const pick = text(form, 'link_pick')
+  const show = Object.fromEntries(ALLOWED_SHOW[mode].map((field) => [field, form.has(`show_${field}`) || (isLinkField(field) && pick === field)]))
   return {
     show,
     question: { on: form.has('question_on'), type: text(form, 'question_type'), prompt: text(form, 'question_prompt'), options: lines(form, 'question_options'), max: Number(text(form, 'question_max')) },
@@ -40,10 +42,12 @@ function readConfig(mode: ModeKey, form: FormData) {
 }
 
 /** Creates or updates this user's single campaign row for the Mode, and rebuilds its questions from the config. */
-async function writeMode(userId: string, mode: ModeKey, config: ModeConfig, activate: boolean): Promise<'ok' | 'pro' | 'nocode'> {
+async function writeMode(userId: string, mode: ModeKey, config: ModeConfig, activate: boolean): Promise<'ok' | 'pro' | 'nocode' | 'links'> {
   return withOwnerDb(userId, async (db) => {
     const [me] = await db.select({ plan: schema.users.plan }).from(schema.users).where(eq(schema.users.id, userId)).limit(1)
     if (!canActivateMode((me?.plan ?? 'free') as Plan, mode).ok) return 'pro'
+    // Saving (not activating a Mode someone saved earlier) may not exceed the plan's link limit.
+    if (!activate && countShownLinks(config.show) > 0 && !canAddSocialLink((me?.plan ?? 'free') as Plan, countShownLinks(config.show) - 1).ok) return 'links'
     const [code] = await db.select().from(schema.codes).where(and(eq(schema.codes.userId, userId), eq(schema.codes.kind, 'personal'))).limit(1)
     if (!code) return 'nocode'
     const [existing] = await db.select().from(schema.campaigns).where(and(eq(schema.campaigns.userId, userId), eq(schema.campaigns.mode, mode), inArray(schema.campaigns.codeId, personalCodeIds(userId)))).limit(1)
@@ -74,7 +78,7 @@ export async function saveMode(formData: FormData) {
   const result = await writeMode(user.id, mode, parseModeConfig(mode, readConfig(mode, formData)), false)
   revalidatePath('/app', 'layout')
   revalidatePath('/t', 'layout')
-  redirect(`/app/modes/${mode}?${result === 'ok' ? 'saved=1' : 'locked=1'}`)
+  redirect(`/app/modes/${mode}?${result === 'ok' ? 'saved=1' : result === 'links' ? 'links=1' : 'locked=1'}`)
 }
 
 export async function activateMode(formData: FormData) {

@@ -6,11 +6,11 @@ import { DirtyForm, SaveButton } from '@/components/DirtyForm'
 import { activateMode, saveMode } from '@/app/app/modes/actions'
 import { getModeState } from '@/lib/mode-queries'
 import { QuestionFields } from '@/components/workspace/QuestionFields'
-import { isModeKey, MODE_INFO, SHOW_LABELS, ALLOWED_SHOW, type ModeConfig } from '@/lib/modes'
-import { canActivateMode } from '@/lib/plans'
+import { countShownLinks, isLinkField, isModeKey, LINK_FIELDS, MODE_INFO, SHOW_LABELS, ALLOWED_SHOW, type ModeConfig } from '@/lib/modes'
+import { canActivateMode, planLimits } from '@/lib/plans'
 import { requireOwner } from '@/lib/owner'
 
-type Search = { saved?: string; activated?: string; locked?: string }
+type Search = { saved?: string; activated?: string; locked?: string; links?: string }
 
 function Section({ title, hint, children }: { title: string; hint: string; children: React.ReactNode }) {
   return <section className="soft-card grid gap-4 p-5 sm:p-6"><div><h2 className="text-lg font-extrabold tracking-[-.03em]">{title}</h2><p className="mt-1 text-sm text-[var(--muted)]">{hint}</p></div>{children}</section>
@@ -33,6 +33,11 @@ export default async function ModeEditor({ params, searchParams }: { params: Pro
   const info = MODE_INFO[mode]
   const locked = !canActivateMode(plan, mode).ok
   const c: ModeConfig = config
+  const linkLimit = planLimits(plan).socialLinks
+  const pickOne = linkLimit === 1
+  const linkFields = ALLOWED_SHOW[mode].filter(isLinkField)
+  const firstShown = LINK_FIELDS.find((field) => c.show[field] === true && linkFields.includes(field)) ?? ''
+  const tooMany = pickOne && countShownLinks(c.show) > 1
 
   return (
     <div className="grid gap-6">
@@ -43,6 +48,12 @@ export default async function ModeEditor({ params, searchParams }: { params: Pro
         <p className="mt-2 max-w-2xl text-sm leading-6 text-[var(--muted)]">{info.blurb} <strong className="text-[var(--ink)]">Visitors see:</strong> {info.sees} <strong className="text-[var(--ink)]">They can:</strong> {info.does}</p>
       </header>
 
+      <section aria-label={`About ${info.name} Mode`} className="soft-card grid gap-3 p-5 sm:p-6">
+        <p className="text-sm leading-6"><strong>Best for:</strong> <span className="text-[var(--muted)]">{info.bestFor}</span></p>
+        <ul className="grid gap-1.5 text-sm leading-6 text-[var(--muted)]">{info.rules.map((rule) => <li key={rule} className="flex gap-2"><Check size={16} weight="bold" className="mt-1 shrink-0 text-[var(--accent)]" />{rule}</li>)}</ul>
+      </section>
+
+      {query.links && <p role="alert" className="rounded-xl border border-[color-mix(in_srgb,var(--danger)_32%,var(--line))] p-3 text-sm text-[var(--danger)]">The Free plan shows one link. Pick one, or <Link href="/plans" className="font-bold underline">go Pro</Link> to show several. Nothing was saved.</p>}
       {query.saved && <p role="status" className="flex items-center gap-2 rounded-xl border border-[var(--accent)] bg-[var(--accent-soft)] p-3 text-sm font-bold"><Check size={18} weight="bold" />Saved. {active ? 'Visitors see the update now.' : 'Preview it, then activate when you are ready.'}</p>}
       {query.activated && <p role="status" className="flex items-center gap-2 rounded-xl border border-[var(--accent)] bg-[var(--accent-soft)] p-3 text-sm font-bold"><Check size={18} weight="bold" />{info.name} is now your active Mode.{code && !code.isLive ? ' Sharing is still paused, so visitors will not see it until you turn sharing on from Home.' : ''}</p>}
       {(locked || query.locked) && (
@@ -55,7 +66,21 @@ export default async function ModeEditor({ params, searchParams }: { params: Pro
           <Section title="What to show" hint="Choose which details from your Profile visitors can see. Edit the details themselves in Profile.">
             {mode === 'incognito'
               ? <p className="rounded-xl bg-[var(--surface-muted)] p-3 text-sm">Your name, photo, bio and accounts always stay hidden in Incognito. Visitors only see the question.</p>
-              : <div className="grid gap-2 sm:grid-cols-2">{ALLOWED_SHOW[mode].map((field) => <Toggle key={field} name={`show_${field}`} label={SHOW_LABELS[field]} checked={c.show[field] === true} />)}</div>}
+              : (
+                <>
+                  <div className="grid gap-2 sm:grid-cols-2">{ALLOWED_SHOW[mode].filter((field) => !pickOne || !isLinkField(field)).map((field) => <Toggle key={field} name={`show_${field}`} label={SHOW_LABELS[field]} checked={c.show[field] === true} />)}</div>
+                  {pickOne && linkFields.length > 0 && (
+                    <fieldset className="grid gap-2 rounded-xl border border-[var(--line)] p-3">
+                      <legend className="px-1 text-sm font-extrabold">Show one link</legend>
+                      <p className="text-xs text-[var(--muted)]">The Free plan shows one link. <Link href="/plans" className="font-bold text-[var(--accent)] underline">Go Pro</Link> to show several.{tooMany && <strong className="text-[var(--danger)]"> You had more than one ticked, so please pick one now.</strong>}</p>
+                      <div className="grid gap-2 sm:grid-cols-2">
+                        {linkFields.map((field) => <label key={field} className="flex cursor-pointer items-center gap-3 rounded-xl border border-[var(--line)] p-3"><input type="radio" name="link_pick" value={field} defaultChecked={firstShown === field} className="h-4 w-4 accent-[var(--accent)]" /><span className="text-sm font-bold">{SHOW_LABELS[field]}</span></label>)}
+                        <label className="flex cursor-pointer items-center gap-3 rounded-xl border border-[var(--line)] p-3"><input type="radio" name="link_pick" value="" defaultChecked={firstShown === ''} className="h-4 w-4 accent-[var(--accent)]" /><span className="text-sm font-bold">No link</span></label>
+                      </div>
+                    </fieldset>
+                  )}
+                </>
+              )}
             {mode !== 'incognito' && <p className="text-xs text-[var(--muted)]">Your name is always shown. <Link href="/app/profile" className="font-bold text-[var(--accent)] underline">Edit your Profile</Link></p>}
           </Section>
 

@@ -40,7 +40,7 @@ export default async function ModesPage() {
                   {active ? <span className="status-live">Active</span> : info.pro ? <span className="plan-badge !bg-[var(--deep)] !text-[var(--lime)]">Pro</span> : <span className="plan-badge">Free</span>}
                 </div>
                 <h3 className="mt-5 text-xl font-extrabold tracking-[-.03em]">{info.name}</h3>
-                <p className="mt-1 text-sm leading-6 text-[var(--muted)]">{info.blurb}</p>
+                <p className="mt-1 text-sm leading-6 text-[var(--muted)]">{info.blurb}</p><p className="mt-2 text-xs leading-5 text-[var(--faint)]">Best for: {info.bestFor}</p>
                 <span className="mt-auto inline-flex items-center gap-1 pt-4 text-sm font-bold text-[var(--accent)]">{info.pro && !isPro ? 'Preview' : 'Customise'}<ArrowRight size={16} className="transition group-hover:translate-x-0.5" /></span>
               </Link>
             )
