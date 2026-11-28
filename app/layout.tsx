@@ -1,6 +1,7 @@
 import type { Metadata } from 'next'
 import localFont from 'next/font/local'
 import './globals.css'
+import { DemoBanner } from '@/components/DemoBanner'
 import { Toaster } from '@/components/Toaster'
 
 const geist = localFont({
@@ -30,7 +31,7 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
       <head>
         <script dangerouslySetInnerHTML={{ __html: THEME_BOOT }} />
       </head>
-      <body className={`${geist.className} antialiased`}><Toaster>{children}</Toaster></body>
+      <body className={`${geist.className} antialiased`}><Toaster><DemoBanner />{children}</Toaster></body>
     </html>
   )
 }
