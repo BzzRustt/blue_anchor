@@ -8,11 +8,12 @@ import { InboxControls } from '@/components/workspace/InboxControls'
 import { InboxList } from '@/components/workspace/InboxList'
 import { ShowQrDialog } from '@/components/workspace/ShowQrDialog'
 import { asInboxFilter, inboxItems, type InboxFilter } from '@/lib/inbox'
+import { asRange, busiestDay, getInsights, percentChange, rate, type Insights } from '@/lib/insights'
 import { MODE_INFO, type ModeKey } from '@/lib/modes'
 import { requireOwner } from '@/lib/owner'
 import { ownerSummary } from '@/lib/product'
 
-type Search = { view?: string; filter?: string; source?: string }
+type Search = { view?: string; filter?: string; source?: string; range?: string }
 
 const modeName = (mode: string) => mode.replace('_', ' ').replace(/^./, (c) => c.toUpperCase())
 
@@ -33,6 +34,7 @@ export default async function HomePage({ searchParams }: { searchParams: Promise
     ownerSummary(session.user.id),
     view === 'inbox' ? inboxItems(session.user.id, filter, source) : Promise.resolve([]),
   ])
+  const insights = view === 'analytics' ? await getInsights(session.user.id, asRange(query.range)) : null
   const { code, active, counts, days, since, campaigns } = home
   if (!code) throw new Error('Personal code missing after setup')
   const baseUrl = (process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3000').replace(/\/$/, '')
@@ -84,7 +86,7 @@ export default async function HomePage({ searchParams }: { searchParams: Promise
               {since && <p className="text-xs text-[var(--muted)]">The free plan shows responses from the last 30 days.</p>}
             </div>
           ) : (
-            <PendingRegion><Analytics days={days} visits={counts.visits30} responses={counts.responses30} clicks={counts.clicks30} /></PendingRegion>
+            <PendingRegion>{insights && <Analytics data={insights} />}</PendingRegion>
           )}
         </section>
       </PendingNav>
@@ -102,23 +104,48 @@ function EmptyInbox({ filter }: { filter: InboxFilter }) {
   return <div className="grid min-h-56 place-items-center p-8 text-center"><div><span className="mx-auto grid h-12 w-12 place-items-center rounded-xl bg-[var(--accent-soft)] text-[var(--accent)]"><ChatCircleDots size={24} /></span><h3 className="mt-4 font-extrabold">{copy[0]}</h3><p className="mt-2 max-w-sm text-sm leading-6 text-[var(--muted)]">{copy[1]}</p></div></div>
 }
 
-function Analytics({ days, visits, responses, clicks }: { days: Array<{ key: string; label: string; count: number }>; visits: number; responses: number; clicks: number }) {
-  const max = Math.max(1, ...days.map((day) => day.count))
+const MODE_LABEL: Record<string, string> = { basic: 'Basic', networking: 'Networking', incognito: 'Incognito', creator: 'Creator', portfolio: 'Portfolio' }
+
+function Analytics({ data }: { data: Insights }) {
+  const max = Math.max(1, ...data.days.map((day) => day.visits))
+  const change = percentChange(data.visits, data.previousVisits)
+  const busiest = busiestDay(data.days)
+  const overall = rate(data.responses, data.visits)
   const tiles = [
-    { label: 'Visits', value: String(visits), note: 'Last 30 days' },
-    { label: 'Responses', value: String(responses), note: 'Last 30 days' },
-    { label: 'Outbound clicks', value: String(clicks), note: 'Links visitors opened, last 30 days' },
-    { label: 'Response rate', value: visits ? `${Math.round((responses / visits) * 100)}%` : '–', note: 'Responses ÷ visits' },
+    { label: 'Page visits', value: String(data.visits), note: change === null ? `Last ${data.range} days` : `${change >= 0 ? '+' : ''}${change}% vs previous ${data.range} days` },
+    { label: 'Responses', value: String(data.responses), note: overall === null ? 'No visits yet' : `${overall}% of visits` },
+    { label: 'Link clicks', value: String(data.clicks), note: 'Clicks to your chosen links' },
+    { label: 'Response rate', value: overall === null ? '–' : `${overall}%`, note: 'Responses ÷ visits' },
   ]
   return (
     <div className="grid gap-4">
-      <p className="text-sm text-[var(--muted)]">A clear view of activity on your personal page.</p>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <p className="text-sm text-[var(--muted)]">What brings people to your personal page, and what they do next.</p>
+        <nav aria-label="Date range" className="flex gap-1 rounded-xl border border-[var(--line)] p-1">
+          {([7, 30] as const).map((r) => <PendingLink key={r} href={`/app?view=analytics&range=${r}`} current={data.range === r} className={`rounded-lg px-4 py-1.5 text-sm font-bold ${data.range === r ? 'bg-[var(--accent)] text-[var(--on-accent)]' : 'text-[var(--muted)]'}`}>{r} days</PendingLink>)}
+        </nav>
+      </div>
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 sm:gap-3">{tiles.map((tile) => <article key={tile.label} className="soft-card p-3 sm:p-5"><p className="text-xs text-[var(--muted)]">{tile.label}</p><p className="mt-2 text-2xl font-extrabold tracking-[-.04em] sm:text-3xl">{tile.value}</p><p className="mt-2 text-[11px] text-[var(--muted)] sm:text-xs">{tile.note}</p></article>)}</div>
       <article className="soft-card p-5 sm:p-6">
-        <div className="flex items-start justify-between gap-3"><div><h3 className="text-lg font-extrabold tracking-[-.03em]">Your activity this week</h3><p className="mt-1 text-xs text-[var(--muted)]">Page visits, not confirmed physical scans</p></div><span className="plan-badge">Last 7 days</span></div>
-        <div className="mt-6 grid h-52 grid-cols-7 items-end gap-2 border-b border-[var(--line)] sm:gap-4" role="img" aria-label={`Visits per day: ${days.map((d) => `${d.label} ${d.count}`).join(', ')}`}>
-          {days.map((day) => <div key={day.key} className="grid h-full grid-rows-[1fr_auto] items-end gap-2 text-center"><div className="flex h-full items-end"><div className={`w-full rounded-t-md ${day.count === max && day.count > 0 ? 'bg-[var(--accent)]' : 'bg-[var(--surface-muted)]'}`} style={{ height: `${Math.max(4, (day.count / max) * 100)}%` }} /></div><span className="pb-2 text-xs font-bold text-[var(--muted)]">{day.label}</span></div>)}
+        <div className="flex items-start justify-between gap-3"><div><h3 className="text-lg font-extrabold tracking-[-.03em]">Visits and responses</h3><p className="mt-1 text-xs text-[var(--muted)]">Page visits, not confirmed physical scans. Darker part of each bar = days with responses.</p></div><span className="plan-badge">Last {data.range} days</span></div>
+        <div className="mt-6 flex h-52 items-end gap-1 border-b border-[var(--line)] sm:gap-2" role="img" aria-label={`Visits per day: ${data.days.map((d) => `${d.label} ${d.visits}`).join(', ')}`}>
+          {data.days.map((day) => (
+            <div key={day.key} className="flex h-full min-w-0 flex-1 flex-col items-center justify-end gap-2 text-center">
+              <div className="flex h-full w-full items-end"><div className={`w-full rounded-t-md ${day.visits === max && day.visits > 0 ? 'bg-[var(--accent)]' : day.responses > 0 ? 'bg-[var(--accent-strong)] opacity-70' : 'bg-[var(--surface-muted)]'}`} style={{ height: `${Math.max(4, (day.visits / max) * 100)}%` }} title={`${day.label}: ${day.visits} visits, ${day.responses} responses`} /></div>
+              {data.range === 7 && <span className="pb-2 text-xs font-bold text-[var(--muted)]">{day.label}</span>}
+            </div>
+          ))}
         </div>
+        {busiest && <p className="mt-4 rounded-xl bg-[var(--accent-soft)] p-3 text-sm"><strong>{busiest.label} was your busiest day</strong> <span className="text-[var(--muted)]">· {busiest.visits} visits · {busiest.responses} responses</span></p>}
+      </article>
+      <article className="soft-card p-5 sm:p-6">
+        <h3 className="text-lg font-extrabold tracking-[-.03em]">Which Modes connect?</h3>
+        {data.modes.length === 0 ? <p className="mt-3 text-sm text-[var(--muted)]">Visits will show up here once someone opens your page.</p> : (
+          <table className="mt-3 w-full text-left text-sm">
+            <thead className="text-xs text-[var(--muted)]"><tr><th className="py-2 font-bold">Mode</th><th className="py-2 text-right font-bold">Visits</th><th className="py-2 text-right font-bold">Responses</th><th className="py-2 text-right font-bold">Response rate</th></tr></thead>
+            <tbody>{data.modes.map((m) => <tr key={m.mode} className="border-t border-[var(--line)]"><td className="py-2.5 font-bold">{MODE_LABEL[m.mode] ?? m.mode}</td><td className="py-2.5 text-right tabular-nums">{m.visits}</td><td className="py-2.5 text-right tabular-nums">{m.responses}</td><td className="py-2.5 text-right tabular-nums">{rate(m.responses, m.visits) === null ? '–' : `${rate(m.responses, m.visits)}%`}</td></tr>)}</tbody>
+          </table>
+        )}
       </article>
     </div>
   )
