@@ -10,7 +10,7 @@ import { CopyLinkButton } from '@/components/workspace/CopyLinkButton'
 import { schema, withOwnerDb } from '@/lib/db'
 import { appBaseUrl, getOwnedEvent } from '@/lib/event-queries'
 import { EVENT_PACKAGES, formatPence } from '@/lib/event-packages'
-import { formatWhen, publicLabel, toLocalInput } from '@/lib/events'
+import { eventPhase, formatWhen, publicLabel, toLocalInput } from '@/lib/events'
 import { stripeConfigured } from '@/lib/stripe'
 import { planLimits, type Plan } from '@/lib/plans'
 import { requireOwner } from '@/lib/owner'
@@ -76,9 +76,9 @@ export default async function EventPage({ params, searchParams }: { params: Prom
         <div className="min-w-0">
           <p className="overline">{formatWhen(event.startsAt)}{event.venue ? ` · ${event.venue}` : ''}</p>
           <h1 className="mt-3 text-3xl font-extrabold tracking-[-.05em] sm:text-4xl">{event.name}</h1>
-          <p className="mt-2"><span className={published ? 'status-live' : 'status-draft'}>{published ? 'Published' : cancelled ? 'Cancelled' : 'Draft · not public'}</span></p>
+          <p className="mt-2"><span className={published ? 'status-live' : 'status-draft'}>{published ? eventPhase(event.startsAt, event.endsAt, event.directoryExpiresAt) : cancelled ? 'Cancelled' : 'Draft · not public'}</span></p>
         </div>
-        <a className="action-secondary" href={url} target="_blank" rel="noreferrer"><ArrowSquareOut size={18} />Attendee view</a>
+        {published ? <a className="action-secondary" href={url} target="_blank" rel="noreferrer"><ArrowSquareOut size={18} />Attendee view</a> : <p className="max-w-xs text-xs leading-5 text-[var(--muted)]">The attendee page opens once the event is published. Until then, preview badges in the Badges tab.</p>}
       </header>
 
       <nav aria-label="Event sections" className="grid grid-cols-4 border-b border-[var(--line)]">
@@ -138,10 +138,11 @@ export default async function EventPage({ params, searchParams }: { params: Prom
 
         {payable && (
           <section id="publish" className={card}>
-            <div><p className="text-xs font-extrabold uppercase tracking-[.14em] text-[var(--faint)]">Draft · not public</p><h2 className={`mt-1 ${h2}`}>Publish your event</h2><p className="mt-1 text-sm leading-6 text-[var(--muted)]">Attendees cannot reach the event page until it is published. You can add people and preview badges first, free. Prices shown are provisional.</p></div>
+            <div><p className="text-xs font-extrabold uppercase tracking-[.14em] text-[var(--faint)]">Draft · not public</p><h2 className={`mt-1 ${h2}`}>Publish your event</h2><p className="mt-1 text-sm leading-6 text-[var(--muted)]">Attendees cannot reach the event page until it is published. You can add people and preview badges first, free.</p></div>
             <form action={startPublish} className="grid gap-3 sm:grid-cols-3">
               <input type="hidden" name="eventId" value={event.id} />
               {EVENT_PACKAGES.map((pkg, index) => <label key={pkg.key} className="soft-card flex cursor-pointer items-center gap-3 p-4"><input type="radio" name="package" value={pkg.key} defaultChecked={index === 0} /><span><span className="block text-sm font-extrabold">{pkg.name}</span><span className="text-sm text-[var(--muted)]">{formatPence(pkg.pricePence)}</span></span></label>)}
+              <p className="text-xs leading-5 text-[var(--muted)] sm:col-span-3">By paying you agree to our <Link href="/terms#refunds" className="font-bold underline">Terms</Link>, including how cancellation and refunds work.</p>
               <button className="action-primary sm:col-span-3" disabled={!paymentsOn}>{paymentsOn ? 'Pay and publish' : 'Payments not switched on yet'}</button>
             </form>
           </section>
@@ -156,7 +157,7 @@ export default async function EventPage({ params, searchParams }: { params: Prom
                 ? <button className="action-primary sm:col-span-3" disabled={!paymentsOn}>{paymentsOn ? 'Pay and add places' : 'Payments not switched on yet'}</button>
                 : <p className="text-sm text-[var(--muted)] sm:col-span-3">You have the largest package. Contact us for more.</p>}
             </form>
-            <p className="mt-2 text-xs text-[var(--muted)]">You pay the full price of the bigger package; credit for the earlier one is not applied yet. Prices are provisional.</p>
+            <p className="mt-2 text-xs text-[var(--muted)]">You pay the full price of the bigger package; credit for the earlier one is not applied yet.</p>
           </details>
         )}
       </div>

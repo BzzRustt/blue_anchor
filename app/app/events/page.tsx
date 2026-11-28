@@ -4,7 +4,7 @@ import { redirect } from 'next/navigation'
 import { CalendarCheck, Plus, Ticket } from '@phosphor-icons/react/dist/ssr'
 import { PageIntro } from '@/components/workspace/PageIntro'
 import { schema, withOwnerDb } from '@/lib/db'
-import { formatWhen } from '@/lib/events'
+import { eventPhase, formatWhen } from '@/lib/events'
 import { rowsOf } from '@/lib/networking'
 import { requireOwner } from '@/lib/owner'
 
@@ -29,6 +29,8 @@ export default async function EventsPage() {
         venue: schema.events.venue,
         startsAt: schema.events.startsAt,
         status: schema.events.status,
+        endsAt: schema.events.endsAt,
+        directoryExpiresAt: schema.events.directoryExpiresAt,
         // `events.id` literally, not ${schema.events.id}: see the note in app/app/modes/page.tsx.
         attendees: sql<number>`(select count(*)::int from event_attendees a where a.event_id = events.id)`,
       })
@@ -52,7 +54,7 @@ export default async function EventsPage() {
         <h2 className="text-lg font-extrabold">Organising</h2>
         {events.length === 0
           ? <div className="soft-card grid place-items-center gap-3 p-10 text-center"><span className="grid h-12 w-12 place-items-center rounded-2xl bg-[var(--accent-soft)] text-[var(--accent-strong)]"><CalendarCheck size={26} /></span><h3 className="text-xl font-extrabold">No events yet</h3><p className="max-w-md text-sm leading-6 text-[var(--muted)]">Create one for free, add your attendee list, and publish when you are ready.</p><Link href="/app/events/new" className="action-primary mt-2">Create your first event</Link></div>
-          : <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">{events.map((event) => <Link key={event.id} href={`/app/events/${event.id}`} className="soft-card flex min-h-48 flex-col p-5 transition hover:border-[var(--accent)]"><span className="grid h-11 w-11 place-items-center rounded-xl bg-[var(--accent-soft)] text-[var(--accent-strong)]"><CalendarCheck size={22} /></span><h3 className="mt-6 text-xl font-extrabold tracking-[-.035em]">{event.name}</h3>{event.status !== 'published' && <span className="status-draft mt-2 w-fit">{event.status === 'cancelled' ? 'Cancelled' : 'Draft'}</span>}<p className="mt-2 text-sm text-[var(--muted)]">{formatWhen(event.startsAt)}{event.venue ? ` · ${event.venue}` : ''}</p><p className="mt-auto pt-5 text-xs font-bold text-[var(--accent-strong)]">{event.attendees} {event.attendees === 1 ? 'tag' : 'tags'} issued</p></Link>)}</div>}
+          : <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">{events.map((event) => <Link key={event.id} href={`/app/events/${event.id}`} className="soft-card flex min-h-48 flex-col p-5 transition hover:border-[var(--accent)]"><span className="grid h-11 w-11 place-items-center rounded-xl bg-[var(--accent-soft)] text-[var(--accent-strong)]"><CalendarCheck size={22} /></span><h3 className="mt-6 text-xl font-extrabold tracking-[-.035em]">{event.name}</h3>{event.status !== 'published' ? <span className="status-draft mt-2 w-fit">{event.status === 'cancelled' ? 'Cancelled' : 'Draft'}</span> : <span className="status-live mt-2 w-fit">{eventPhase(event.startsAt, event.endsAt, event.directoryExpiresAt)}</span>}<p className="mt-2 text-sm text-[var(--muted)]">{formatWhen(event.startsAt)}{event.venue ? ` · ${event.venue}` : ''}</p><p className="mt-auto pt-5 text-xs font-bold text-[var(--accent-strong)]">{event.attendees} {event.attendees === 1 ? 'tag' : 'tags'} issued</p></Link>)}</div>}
       </section>
 
       <section className="grid gap-3">

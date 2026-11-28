@@ -37,7 +37,7 @@ export function Toaster({ children }: { children: ReactNode }) {
   const toast = useCallback((text: string, tone: Tone = 'ok') => {
     const id = ++next.current
     setToasts((list) => [...list.slice(-2), { id, text, tone }])
-    window.setTimeout(() => setToasts((list) => list.filter((t) => t.id !== id)), 4200)
+    window.setTimeout(() => setToasts((list) => list.filter((t) => t.id !== id)), 7000)
   }, [])
 
   return (

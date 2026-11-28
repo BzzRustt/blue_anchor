@@ -5,6 +5,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
   badgesCsv,
+  eventPhase,
   eventSlug,
   formatTag,
   generateAccessCode,
@@ -136,4 +137,12 @@ test('card labels read in the first person, not as the question asked', () => {
   assert.equal(publicLabel('What is your fun fact?'), 'Fun fact')
   assert.equal(publicLabel('Your favourite film?'), 'Favourite film')
   assert.equal(publicLabel('Fun fact about you'), 'Fun fact about you')
+})
+
+test('eventPhase labels each stage of a published event', () => {
+  const d = (h: number) => new Date(Date.UTC(2026, 0, 1, h))
+  assert.equal(eventPhase(d(10), d(12), d(14), d(9)), 'Upcoming')
+  assert.equal(eventPhase(d(10), d(12), d(14), d(11)), 'Live now')
+  assert.equal(eventPhase(d(10), d(12), d(14), d(13)), 'Ended, messages still open')
+  assert.equal(eventPhase(d(10), d(12), d(14), d(15)), 'Closed')
 })

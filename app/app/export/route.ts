@@ -19,7 +19,7 @@ export async function GET() {
     const events = await db.select().from(schema.events).where(eq(schema.events.userId, userId))
     const attendees = events.length ? await db.select().from(schema.eventAttendees).where(inArray(schema.eventAttendees.eventId, events.map((e) => e.id))) : []
     const purchases = await db.select().from(schema.eventPurchases).where(eq(schema.eventPurchases.userId, userId))
-    return { exportedAt: new Date().toISOString(), user, codes, campaigns, questions, responses, events, attendees: attendees.map(({ claimToken: _claimToken, ...rest }) => rest), purchases }
+    return { exportedAt: new Date().toISOString(), user, codes, campaigns, questions, responses: responses.map(({ sessionToken: _sessionToken, deviceHash: _deviceHash, ...rest }) => rest), events, attendees: attendees.map(({ claimToken: _claimToken, ...rest }) => rest), purchases }
   })
   return new Response(JSON.stringify(data, null, 2), {
     headers: {

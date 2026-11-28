@@ -53,6 +53,13 @@ const MAX_ROLES = 8
 export const formatWhen = (date: Date) =>
   date.toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Europe/London' })
 
+/** Plain-English stage of a published event, for labels. Draft/cancelled are handled by the caller. */
+export function eventPhase(startsAt: Date, endsAt: Date, directoryExpiresAt: Date, now = new Date()): 'Upcoming' | 'Live now' | 'Ended, messages still open' | 'Closed' {
+  if (now < startsAt) return 'Upcoming'
+  if (now < endsAt) return 'Live now'
+  return now < directoryExpiresAt ? 'Ended, messages still open' : 'Closed'
+}
+
 /** "F=Founder, I=Investor" → roles. Letters are unique, A–Z, and capped. */
 export function parseRoles(input: string): { roles: Role[]; error?: string } {
   const roles: Role[] = []

@@ -26,6 +26,8 @@ export function MarketingFooter() {
             <a href="mailto:hello@scanme.app">Contact us</a>
             <a href="mailto:feedback@scanme.app">Share feedback</a>
             <Link href="/login">Owner login</Link>
+            <Link href="/privacy">Privacy notice</Link>
+            <Link href="/terms">Terms of use</Link>
           </div>
         </div>
         <p className="text-xs text-[#9eb7aa] md:col-span-3">© {new Date().getFullYear()} ScanMe. Built for better introductions.</p>
