@@ -49,3 +49,4 @@ deno.lock
 .demo-accounts.txt
 
 .next-test/
+.next-build/
