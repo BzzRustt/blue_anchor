@@ -47,3 +47,5 @@ deno.lock
 .test-outbox/
 .test-accounts.txt
 .demo-accounts.txt
+
+.next-test/

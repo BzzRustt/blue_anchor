@@ -1,5 +1,7 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  // Lets a second dev server (the test app) run beside another one: NEXT_DIST_DIR=.next-test.
+  distDir: process.env.NEXT_DIST_DIR || '.next',
   // Profile photos are uploaded through a server action (re-encoded and capped at 5 MB there).
   experimental: { serverActions: { bodySizeLimit: '6mb' } },
   // Nickname links: scanme.app/@name opens that person's page (never while their Mode is Incognito).

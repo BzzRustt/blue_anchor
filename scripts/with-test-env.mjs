@@ -56,6 +56,10 @@ const forced = { RESEND_API_KEY: '', EMAIL_MODE: 'capture' }
 const env = { ...process.env }
 for (const name of KNOWN) env[name] = forced[name] ?? values[name] ?? ''
 env.EMAIL_MODE = 'capture'
+// Optional: SCANME_TEST_PORT=3100 runs the test app on another port when 3000 is taken.
+if (process.env.SCANME_TEST_PORT && /^\d{4,5}$/.test(process.env.SCANME_TEST_PORT)) {
+  for (const name of ['NEXT_PUBLIC_APP_URL', 'BETTER_AUTH_URL']) if (env[name]) env[name] = env[name].replace(/:\d+$/, `:${process.env.SCANME_TEST_PORT}`)
+}
 env.RESEND_API_KEY = ''
 env.SCANME_ENV = 'test'
 
