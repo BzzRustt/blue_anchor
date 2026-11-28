@@ -122,6 +122,17 @@ export default async function EventPage({ params, searchParams }: { params: Prom
         <section className="grid grid-cols-2 gap-3 md:grid-cols-4" aria-label="Event numbers">
           {([['Registered', stats.registered], ['Places left', stats.remaining], ['Cards complete', stats.completed], ['Checked in', stats.checkedIn]] as const).map(([label, value]) => <article key={label} className="soft-card p-4"><p className="text-xs font-extrabold uppercase tracking-[.14em] text-[var(--faint)]">{label}</p><p className="mt-1 text-3xl font-extrabold tabular-nums">{value}</p></article>)}
         </section>
+        <section aria-label="Event times and capacity" className="grid gap-3 md:grid-cols-[1.2fr_1fr]">
+          <article className="soft-card grid gap-3 p-5 sm:grid-cols-3">
+            <div><p className="text-xs font-extrabold uppercase tracking-[.14em] text-[var(--faint)]">Networking opens</p><p className="mt-1 text-sm font-bold">{formatWhen(event.networkingOpensAt ?? event.startsAt)}</p></div>
+            <div><p className="text-xs font-extrabold uppercase tracking-[.14em] text-[var(--faint)]">Event ends</p><p className="mt-1 text-sm font-bold">{formatWhen(event.endsAt)}</p></div>
+            <div><p className="text-xs font-extrabold uppercase tracking-[.14em] text-[var(--faint)]">Cards close</p><p className="mt-1 text-sm font-bold">{formatWhen(event.directoryExpiresAt)}</p></div>
+          </article>
+          <article className="soft-card p-5">
+            <p className="flex justify-between text-sm"><span className="font-extrabold">Event capacity</span><span className="text-[var(--muted)]">{stats.registered} / {cap} places used</span></p>
+            <div role="progressbar" aria-valuenow={Math.min(100, Math.round((stats.registered / Math.max(1, cap)) * 100))} aria-valuemin={0} aria-valuemax={100} aria-label="Places used" className="mt-3 h-2.5 overflow-hidden rounded-full bg-[var(--surface-muted)]"><div className="h-full rounded-full bg-[var(--accent)]" style={{ width: `${Math.min(100, Math.round((stats.registered / Math.max(1, cap)) * 100))}%` }} /></div>
+          </article>
+        </section>
         {stats.joinedLastHour > 0 && <p className="text-sm text-[var(--muted)]"><strong className="text-[var(--ink)]">{stats.joinedLastHour}</strong> {stats.joinedLastHour === 1 ? 'person' : 'people'} joined themselves in the last hour. If that looks wrong, check the Attendees tab; you can remove anyone.</p>}
 
         <section className="grid gap-4 md:grid-cols-3">

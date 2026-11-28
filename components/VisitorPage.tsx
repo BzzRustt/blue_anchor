@@ -67,9 +67,9 @@ function Profile({ owner, config, mode, social, href }: { owner: OwnerProfile; c
       {on('bio') && owner.bio && <p className="mx-auto mt-3 max-w-sm text-sm leading-6 text-[var(--muted)]">{owner.bio}</p>}
       {mode === 'networking' && (
         <div className="mt-5 grid gap-2 text-left">
-          {on('looking') && owner.lookingFor && <Fact label="Looking for" text={owner.lookingFor} />}
+          {on('looking') && owner.lookingFor && <Fact label="Looking for" text={owner.lookingFor} chips />}
           {on('offer') && owner.canOffer && <Fact label="Can help with" text={owner.canOffer} />}
-          {on('interests') && owner.interests && <Fact label="Interests" text={owner.interests} />}
+          {on('interests') && owner.interests && <Fact label="Interests" text={owner.interests} chips />}
         </div>
       )}
       {social.length > 0 && <div className="mt-5 flex flex-wrap justify-center gap-2">{social.map(({ link, index }) => { const Icon = SOCIAL_ICON[link.key] ?? LinkSimple; return <a key={link.key} href={href(link, index)} target="_blank" rel="noopener noreferrer" className="inline-flex min-h-10 items-center gap-1.5 rounded-lg border border-[var(--line)] bg-[var(--surface)] px-3 text-sm font-bold"><Icon size={18} />{link.label}</a> })}</div>}
@@ -77,7 +77,16 @@ function Profile({ owner, config, mode, social, href }: { owner: OwnerProfile; c
   )
 }
 
-const Fact = ({ label, text }: { label: string; text: string }) => <div className="rounded-xl bg-[var(--surface)] p-3"><p className="text-[11px] font-extrabold uppercase tracking-[.12em] text-[var(--accent)]">{label}</p><p className="mt-1 text-sm leading-6">{text}</p></div>
+const Fact = ({ label, text, chips = false }: { label: string; text: string; chips?: boolean }) => {
+  // Comma-separated values ("Design, Climate") read better as small tags; a single phrase stays as text.
+  const parts = chips ? text.split(',').map((part) => part.trim()).filter(Boolean) : []
+  return (
+    <div className="rounded-xl bg-[var(--surface)] p-3">
+      <p className="text-[11px] font-extrabold uppercase tracking-[.12em] text-[var(--accent)]">{label}</p>
+      {parts.length > 1 ? <p className="mt-1.5 flex flex-wrap gap-1.5">{parts.map((part) => <span key={part} className="rounded-full bg-[var(--accent-soft)] px-2.5 py-0.5 text-xs font-bold">{part}</span>)}</p> : <p className="mt-1 text-sm leading-6">{text}</p>}
+    </div>
+  )
+}
 
 function Creator({ config, links, href }: { config: ModeConfig; links: VisitorLink[]; href: (link: VisitorLink, index: number) => string }) {
   const f = config.creator.featured

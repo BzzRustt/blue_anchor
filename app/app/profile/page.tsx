@@ -9,7 +9,10 @@ import { SignOutButton } from '@/components/workspace/SignOutButton'
 import { PageIntro } from '@/components/workspace/PageIntro'
 import { PhotoUpload } from '@/components/workspace/PhotoUpload'
 import { schema, withOwnerDb } from '@/lib/db'
-import { MODE_INFO, type ModeKey } from '@/lib/modes'
+import { VisitorPage } from '@/components/VisitorPage'
+import { getModeState } from '@/lib/mode-queries'
+import { buildBlocks, isModeKey, MODE_INFO, MODE_KEYS, type ModeKey } from '@/lib/modes'
+import type { VisitorExperience } from '@/lib/product'
 import { requireOwner } from '@/lib/owner'
 import { modeKey } from '@/lib/product'
 
@@ -27,7 +30,7 @@ const ERRORS: Record<string, string> = {
   photo_type: 'That file isn’t a photo we can use. Upload a JPEG, PNG or WebP image.',
 }
 
-export default async function ProfilePage({ searchParams }: { searchParams: Promise<{ saved?: string; error?: string; detail?: string; pro?: string }> }) {
+export default async function ProfilePage({ searchParams }: { searchParams: Promise<{ saved?: string; error?: string; detail?: string; pro?: string; pm?: string }> }) {
   const query = await searchParams
   const session = await requireOwner()
   const { owner, code, live } = await withOwnerDb(session.user.id, async (db) => {
@@ -39,6 +42,12 @@ export default async function ProfilePage({ searchParams }: { searchParams: Prom
     return { owner, code, live }
   })
   const active: ModeKey | null = live ? modeKey(live.mode) : null
+  // The preview shows this profile through one Mode, exactly as a visitor would see it (saved details; save to refresh it).
+  const previewMode: ModeKey = query.pm && isModeKey(query.pm) ? query.pm : (active ?? 'basic')
+  const ps = await getModeState(session.user.id, previewMode)
+  const previewBlocks = (ps.campaign
+    ? ps.blocks.map((b) => ({ ...b, config: b.config as VisitorExperience['blocks'][number]['config'] }))
+    : buildBlocks(previewMode, ps.config).map((b, i) => ({ id: `preview-${i}`, campaignId: '', position: i, required: b.required, type: b.type, config: b.config, createdAt: new Date() }))) as VisitorExperience['blocks']
   const input = (name: keyof typeof owner & string, label: string, placeholder?: string, type = 'text', span = false) => (
     <label className={`field-label ${span ? 'sm:col-span-2' : ''}`}>{label}<input className="field-input" type={type} name={name} defaultValue={(owner[name] as string | null) ?? ''} placeholder={placeholder} /></label>
   )
@@ -93,6 +102,12 @@ export default async function ProfilePage({ searchParams }: { searchParams: Prom
             <h2 className="relative mt-3 text-xl font-extrabold tracking-[-.03em]">Your information. Your choice.</h2>
             <p className="relative mt-2 text-sm leading-6 text-[var(--on-deep-muted)]">Your {active ? MODE_INFO[active].name : 'active'} Mode decides which details are shared. Editing your profile never reveals a hidden field.</p>
             {active && <Link href={`/app/modes/${active}/preview`} className="action-secondary relative mt-4 w-full !border-white !bg-white !text-[var(--deep)]"><Eye size={18} />See what others see</Link>}
+          </div>
+          <div className="soft-card grid gap-3 p-5">
+            <div className="flex items-center justify-between gap-2"><h2 className="font-extrabold">Visitor preview</h2><span className="text-xs text-[var(--muted)]">Save to refresh</span></div>
+            <nav aria-label="Preview as" className="flex flex-wrap gap-1.5">{MODE_KEYS.map((key) => <Link key={key} href={`/app/profile?pm=${key}`} scroll={false} aria-current={key === previewMode ? 'true' : undefined} className={`rounded-lg border px-2.5 py-1 text-xs font-bold ${key === previewMode ? 'border-[var(--accent)] bg-[var(--accent-soft)]' : 'border-[var(--line)] text-[var(--muted)]'}`}>{MODE_INFO[key].name}{key === active ? ' · live' : ''}</Link>)}</nav>
+            <div className="max-h-[520px] overflow-y-auto rounded-[var(--radius)] bg-[var(--surface-muted)] p-3"><VisitorPage mode={previewMode} config={ps.config} owner={ps.owner} blocks={previewBlocks} slug={ps.code?.slug ?? ''} preview /></div>
+            <p className="text-xs text-[var(--muted)]">Preview only. Your Mode decides which details are shown.</p>
           </div>
           <div className="soft-card p-5"><h2 className="font-extrabold">Your plan</h2><p className="mt-2 text-3xl font-extrabold">{owner.plan === 'free' ? 'Free' : 'Pro'}</p><p className="mt-2 text-sm leading-6 text-[var(--muted)]">{owner.plan === 'free' ? 'Basic, Networking and Incognito Modes. Pro adds Creator and Portfolio.' : 'Every Mode, including Creator and Portfolio.'}</p>{query.pro && owner.plan === 'free' && <p className="mt-3 text-sm font-bold text-[var(--accent-strong)]">Thanks. Pro switches on as soon as Stripe confirms the payment; refresh in a moment.</p>}{owner.plan === 'free' && proConfigured() && <form action={startPro} className="mt-5"><button className="action-primary w-full">Upgrade to Pro</button></form>}{owner.plan !== 'free' && owner.stripeCustomerId && <form action={openBilling} className="mt-5"><button className="action-secondary w-full">Manage or cancel Pro</button></form>}<Link href="/plans" className="action-secondary mt-3 w-full">Compare plans <ArrowSquareOut size={17} /></Link></div>
           <div className="soft-card p-5"><h2 className="font-extrabold">Account</h2><p className="mt-2 break-all text-sm text-[var(--muted)]">{owner.email}</p>{code && <p className="mt-2 text-sm text-[var(--muted)]">Your code <span className="font-mono font-bold text-[var(--ink)]">{code.slug.toUpperCase()}</span></p>}<div className="mt-4 grid gap-2"><Link href="/app/settings" className="action-secondary w-full justify-center"><GearSix size={17} />Settings, your data and account</Link><SignOutButton /></div></div>
