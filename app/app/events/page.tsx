@@ -29,6 +29,7 @@ export default async function EventsPage() {
         venue: schema.events.venue,
         startsAt: schema.events.startsAt,
         status: schema.events.status,
+        capacity: schema.events.capacity,
         endsAt: schema.events.endsAt,
         directoryExpiresAt: schema.events.directoryExpiresAt,
         // `events.id` literally, not ${schema.events.id}: see the note in app/app/modes/page.tsx.
@@ -54,7 +55,25 @@ export default async function EventsPage() {
         <h2 className="text-lg font-extrabold">Organising</h2>
         {events.length === 0
           ? <div className="soft-card grid place-items-center gap-3 p-10 text-center"><span className="grid h-12 w-12 place-items-center rounded-2xl bg-[var(--accent-soft)] text-[var(--accent-strong)]"><CalendarCheck size={26} /></span><h3 className="text-xl font-extrabold">No events yet</h3><p className="max-w-md text-sm leading-6 text-[var(--muted)]">Create one for free, add your attendee list, and publish when you are ready.</p><Link href="/app/events/new" className="action-primary mt-2">Create your first event</Link></div>
-          : <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">{events.map((event) => <Link key={event.id} href={`/app/events/${event.id}`} className="soft-card flex min-h-48 flex-col p-5 transition hover:border-[var(--accent)]"><span className="grid h-11 w-11 place-items-center rounded-xl bg-[var(--accent-soft)] text-[var(--accent-strong)]"><CalendarCheck size={22} /></span><h3 className="mt-6 text-xl font-extrabold tracking-[-.035em]">{event.name}</h3>{event.status !== 'published' ? <span className="status-draft mt-2 w-fit">{event.status === 'cancelled' ? 'Cancelled' : 'Draft'}</span> : <span className="status-live mt-2 w-fit">{eventPhase(event.startsAt, event.endsAt, event.directoryExpiresAt)}</span>}<p className="mt-2 text-sm text-[var(--muted)]">{formatWhen(event.startsAt)}{event.venue ? ` · ${event.venue}` : ''}</p><p className="mt-auto pt-5 text-xs font-bold text-[var(--accent-strong)]">{event.attendees} {event.attendees === 1 ? 'tag' : 'tags'} issued</p></Link>)}</div>}
+          : <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">{events.map((event) => {
+            const phase = event.status === 'published' ? eventPhase(event.startsAt, event.endsAt, event.directoryExpiresAt) : null
+            const pct = event.capacity ? Math.min(100, Math.round((event.attendees / event.capacity) * 100)) : 0
+            const cta = event.status === 'draft' || event.status === 'awaiting_payment' ? 'Continue setup' : phase === 'Closed' ? 'View summary' : 'Manage event'
+            const day = event.startsAt.toLocaleString('en-GB', { day: 'numeric', timeZone: 'Europe/London' })
+            const month = event.startsAt.toLocaleString('en-GB', { month: 'short', timeZone: 'Europe/London' }).toUpperCase()
+            return (
+              <Link key={event.id} href={`/app/events/${event.id}`} className="soft-card flex min-h-48 flex-col p-5 transition hover:border-[var(--accent)]">
+                <div className="flex items-start justify-between gap-3">
+                  <span aria-hidden="true" className="grid h-14 w-14 shrink-0 place-items-center rounded-xl bg-[var(--accent-soft)] text-center leading-none text-[var(--accent-strong)]"><span><span className="block text-[10px] font-extrabold tracking-[.1em]">{month}</span><span className="block text-xl font-extrabold">{day}</span></span></span>
+                  {phase ? <span className="status-live">{phase}</span> : <span className="status-draft">{event.status === 'cancelled' ? 'Cancelled' : 'Draft'}</span>}
+                </div>
+                <h3 className="mt-4 text-xl font-extrabold tracking-[-.035em]">{event.name}</h3>
+                <p className="mt-1 text-sm text-[var(--muted)]">{formatWhen(event.startsAt)}{event.venue ? ` · ${event.venue}` : ''}</p>
+                {event.capacity ? <div className="mt-4"><p className="mb-1 flex justify-between text-xs text-[var(--muted)]"><span>{event.attendees} / {event.capacity} guests</span><span>{pct}%</span></p><div role="progressbar" aria-valuenow={pct} aria-valuemin={0} aria-valuemax={100} aria-label="Places used" className="h-2 overflow-hidden rounded-full bg-[var(--surface-muted)]"><div className="h-full rounded-full bg-[var(--accent)]" style={{ width: `${pct}%` }} /></div></div> : <p className="mt-4 text-xs text-[var(--muted)]">{event.attendees} {event.attendees === 1 ? 'tag' : 'tags'} issued</p>}
+                <p className="mt-auto pt-5 text-xs font-bold text-[var(--accent-strong)]">{cta} →</p>
+              </Link>
+            )
+          })}</div>}
       </section>
 
       <section className="grid gap-3">

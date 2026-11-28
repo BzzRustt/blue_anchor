@@ -22,7 +22,11 @@ export function ResponseRow({ item }: { item: InboxItem }) {
   const [confirmBlock, setConfirmBlock] = useState(false)
   const acted = useRef(false)
   const unread = !item.readAt
-  const first = item.answers[0]?.[1] ?? 'No written answer'
+  // Networking asks for a name first, then an introduction: show the name as the sender and the introduction as the text.
+  const named = item.mode === 'networking' && item.answers.length > 1
+  const sender = named ? item.answers[0][1] : item.mode === 'incognito' ? 'Anonymous visitor' : `Visitor ${item.visitor}`
+  const initials = named ? sender.split(/\s+/).map((w) => w[0]).join('').slice(0, 2).toUpperCase() : item.visitor
+  const first = (named ? item.answers[1][1] : item.answers[0]?.[1]) ?? 'No written answer'
 
   const run = (action: (fd: FormData) => Promise<void>, message: string, close = false) => start(async () => {
     if (message) acted.current = true
@@ -52,17 +56,20 @@ export function ResponseRow({ item }: { item: InboxItem }) {
 
   return (
     <li className={unread ? 'bg-[var(--accent-soft)]' : ''}>
-      <button type="button" onClick={open} className="grid w-full gap-1 p-4 text-left hover:bg-[var(--surface-muted)] focus-visible:bg-[var(--surface-muted)] sm:p-5">
-        <span className="flex flex-wrap items-center gap-2">
-          {unread && <span aria-hidden="true" className="h-2.5 w-2.5 rounded-full bg-[var(--accent)]" />}
-          <span className={unread ? 'font-extrabold' : 'font-semibold text-[var(--muted)]'}>{item.campaignName ?? 'Deleted Mode'}</span>
-          {unread && <span className="status-live">New</span>}
-          {item.flagged && <span className="status-draft">Reported</span>}
-          {item.blocked && <span className="status-draft">Sender blocked</span>}
-          {repeat && <span className="rounded-md border border-[var(--line)] px-1.5 py-0.5 text-[11px] font-bold text-[var(--muted)]" title={`Visitor ${item.visitor} has sent ${item.fromSame} responses`}>{repeat}</span>}
+      <button type="button" onClick={open} className="flex w-full items-start gap-3 p-4 text-left hover:bg-[var(--surface-muted)] focus-visible:bg-[var(--surface-muted)] sm:p-5">
+        <span aria-hidden="true" className={`grid h-10 w-10 shrink-0 place-items-center rounded-full text-xs font-extrabold ${item.mode === 'incognito' ? 'bg-[var(--surface-muted)] text-[var(--muted)]' : 'bg-[var(--accent-soft)] text-[var(--accent-strong)]'}`}>{item.mode === 'incognito' ? '?' : initials}</span>
+        <span className="grid min-w-0 flex-1 gap-1">
+          <span className="flex flex-wrap items-center gap-2">
+            <span className={unread ? 'font-extrabold' : 'font-semibold text-[var(--muted)]'}>{sender}</span>
+            {unread && <span aria-label="Unread" className="h-2.5 w-2.5 rounded-full bg-[var(--accent)]" />}
+            {item.flagged && <span className="status-draft">Reported</span>}
+            {item.blocked && <span className="status-draft">Sender blocked</span>}
+            {repeat && <span className="rounded-md border border-[var(--line)] px-1.5 py-0.5 text-[11px] font-bold text-[var(--muted)]" title={`Visitor ${item.visitor} has sent ${item.fromSame} responses`}>{repeat}</span>}
+            <time dateTime={item.submittedAt} className="ml-auto text-xs text-[var(--muted)]">{when(item.submittedAt)}</time>
+          </span>
+          <span className={`line-clamp-2 text-sm leading-6 ${unread ? 'text-[var(--ink)]' : 'text-[var(--muted)]'}`}>{first}</span>
+          <span><span className="plan-badge">{item.campaignName ?? modeName(item.mode)}</span></span>
         </span>
-        <span className={`line-clamp-2 text-sm leading-6 ${unread ? 'text-[var(--ink)]' : 'text-[var(--muted)]'}`}>{first}</span>
-        <span className="text-xs text-[var(--muted)]">{modeName(item.mode)} · Visitor {item.visitor} · <time dateTime={item.submittedAt}>{when(item.submittedAt)}</time></span>
       </button>
 
       <dialog ref={dialog} onClose={closed} aria-labelledby={titleId} className="w-[min(560px,calc(100%-24px))] rounded-[18px] border border-[var(--line)] bg-[var(--page)] p-0 text-[var(--ink)] shadow-[var(--shadow)] backdrop:bg-[#0d231ab5]">

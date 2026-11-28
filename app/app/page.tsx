@@ -5,9 +5,10 @@ import { ConfirmForm } from '@/components/ConfirmForm'
 import { GoLiveDialog } from '@/components/workspace/GoLiveDialog'
 import { PendingLink, PendingNav, PendingRegion } from '@/components/PendingNav'
 import { InboxControls } from '@/components/workspace/InboxControls'
-import { ResponseRow } from '@/components/workspace/ResponseRow'
+import { InboxList } from '@/components/workspace/InboxList'
 import { ShowQrDialog } from '@/components/workspace/ShowQrDialog'
 import { asInboxFilter, inboxItems, type InboxFilter } from '@/lib/inbox'
+import { MODE_INFO, type ModeKey } from '@/lib/modes'
 import { requireOwner } from '@/lib/owner'
 import { ownerSummary } from '@/lib/product'
 
@@ -38,42 +39,33 @@ export default async function HomePage({ searchParams }: { searchParams: Promise
   const url = `${baseUrl}/t/${code.slug}`
   const shortCode = code.slug.toUpperCase()
 
-  const stats = [
-    { label: 'Unread messages', value: String(counts.unread).padStart(2, '0'), note: counts.unread ? 'Needs your attention' : 'All caught up' },
-    { label: 'Profile visits', value: String(counts.visits30), note: 'Last 30 days' },
-    { label: 'Responses received', value: String(counts.responses), note: since ? 'Last 30 days, all Modes' : 'Across your Modes' },
-  ]
 
   return (
     <div className="grid gap-7">
-      <header>
-        <p className="overline">Personal space</p>
-        <h1 className="mt-3 text-3xl font-extrabold tracking-[-.05em] sm:text-4xl">{greeting(home.name ?? session.user.name)}</h1>
-        <p className="mt-2 text-sm text-[var(--muted)]">Here is what has been happening with your ScanMe.</p>
+      <header className="flex flex-wrap items-end justify-between gap-4">
+        <div>
+          <h1 className="text-3xl font-extrabold tracking-[-.05em] sm:text-4xl">{greeting(home.name ?? session.user.name)}</h1>
+          <p className="mt-2 text-sm text-[var(--muted)]">Your conversations, all in one place.</p>
+        </div>
+        <div className="flex flex-wrap items-center gap-x-5 gap-y-3">
+          <p className="flex items-center gap-4 text-sm text-[var(--muted)]"><span><strong className="text-xl text-[var(--ink)]">{counts.unread}</strong> unread</span><span aria-hidden="true" className="h-6 w-px bg-[var(--line)]" /><span><strong className="text-xl text-[var(--ink)]">{counts.visits30}</strong> visits (30 days)</span></p>
+          <ShowQrDialog url={url} code={shortCode} triggerClassName="action-primary" />
+        </div>
       </header>
 
-      <section aria-label="Summary" className="grid grid-cols-3 gap-2 sm:gap-3">
-        {stats.map((stat) => <article key={stat.label} className="soft-card p-3 sm:p-5"><p className="text-xs text-[var(--muted)]">{stat.label}</p><p className="mt-2 text-2xl font-extrabold tracking-[-.04em] sm:text-3xl">{stat.value}</p><p className="mt-2 text-[11px] leading-4 text-[var(--muted)] sm:text-xs">{stat.note}</p></article>)}
-      </section>
-
-      <section aria-labelledby="my-scanme" className="deep-card p-6 sm:p-8">
-        <span aria-hidden="true" className="pointer-events-none absolute -right-24 -top-24 h-80 w-80 rounded-full border border-white/10 bg-white/[.03]" />
-        <div className="relative flex flex-wrap items-start justify-between gap-3">
-          <p id="my-scanme" className="text-[11px] font-extrabold uppercase tracking-[.16em] text-[var(--on-deep-muted)]">My ScanMe</p>
-          <span className={`rounded-md px-2 py-1 text-xs font-bold ${code.isLive ? 'bg-white text-[var(--deep)]' : 'bg-white/15 text-white'}`}>{code.isLive ? 'Sharing on' : 'Sharing paused'}</span>
+      <section aria-labelledby="my-scanme" className="soft-card flex flex-wrap items-center gap-4 p-4 sm:p-5">
+        <span className="grid h-12 w-12 shrink-0 place-items-center rounded-xl bg-[var(--accent-soft)] text-[var(--accent)]"><SquaresFour size={24} /></span>
+        <div className="min-w-0 flex-1">
+          <h2 id="my-scanme" className="flex flex-wrap items-center gap-2 text-lg font-extrabold tracking-[-.03em]">{active ? modeName(active.mode) : 'No'} Mode <span className={code.isLive ? 'status-live' : 'status-draft'}>{code.isLive ? 'Live' : 'Sharing paused'}</span></h2>
+          <p className="text-sm text-[var(--muted)]">{active && active.mode in MODE_INFO ? MODE_INFO[active.mode as ModeKey].blurb : 'Pick a Mode to decide what people see.'} Code <strong className="text-[var(--ink)]">{shortCode}</strong>.</p>
         </div>
-        <h2 className="relative mt-4 text-3xl font-extrabold tracking-[-.05em]">{active ? modeName(active.mode) : 'No Mode'} <span className="serif-accent text-[var(--lime)]">Mode</span></h2>
-        <p className="relative mt-2 max-w-md text-sm leading-6 text-[var(--on-deep-muted)]">Your permanent code <strong className="text-white">{shortCode}</strong> opens whatever Mode you have chosen to share.{!code.isLive && ' Sharing is paused, so visitors see an unavailable page.'}</p>
-        <div className="relative mt-6 flex flex-wrap items-center gap-2">
-          <ShowQrDialog url={url} code={shortCode} triggerClassName="action-secondary !border-white !bg-white !text-[var(--deep)]" />
+        <div className="flex flex-wrap items-center gap-2">
           {/* The preview route never sends anything, so you can't message yourself from it. */}
-          <Link href={`/app/modes/${active?.mode ?? 'basic'}/preview`} className="action-secondary !border-white/50 !bg-transparent !text-white hover:!bg-white/10"><Eye size={18} />Visitor preview</Link>
-          <Link href="/app/modes" className="action-quiet !text-[var(--lime)] hover:!bg-white/10"><SquaresFour size={18} />Switch Mode</Link>
-          <span className="ml-auto">
-            {code.isLive
-              ? <ConfirmForm action={toggleCode} tone="danger" title="Pause personal sharing?" message="Anyone scanning your QR will see an unavailable page until you turn sharing back on. Your Modes and responses stay in your workspace." confirmLabel="Pause sharing" triggerLabel={<><Pause size={18} weight="bold" />Pause sharing</>} triggerClassName="action-quiet !text-white hover:!bg-white/10"><input type="hidden" name="codeId" value={code.id} /><input type="hidden" name="enabled" value="false" /></ConfirmForm>
-              : <GoLiveDialog codeId={code.id} modeName={active ? modeName(active.mode) : 'Basic'} modeKey={active?.mode ?? 'basic'} question={home.liveQuestion} />}
-          </span>
+          <Link href={`/app/modes/${active?.mode ?? 'basic'}/preview`} className="action-secondary"><Eye size={18} />Preview</Link>
+          <Link href="/app/modes" className="action-secondary"><SquaresFour size={18} />Change mode</Link>
+          {code.isLive
+            ? <ConfirmForm action={toggleCode} tone="danger" title="Pause personal sharing?" message="Anyone scanning your QR will see an unavailable page until you turn sharing back on. Your Modes and responses stay in your workspace." confirmLabel="Pause sharing" triggerLabel={<><Pause size={18} weight="bold" />Pause sharing</>} triggerClassName="action-quiet"><input type="hidden" name="codeId" value={code.id} /><input type="hidden" name="enabled" value="false" /></ConfirmForm>
+            : <GoLiveDialog codeId={code.id} modeName={active ? modeName(active.mode) : 'Basic'} modeKey={active?.mode ?? 'basic'} question={home.liveQuestion} />}
         </div>
       </section>
 
@@ -87,7 +79,7 @@ export default async function HomePage({ searchParams }: { searchParams: Promise
               <p className="text-sm text-[var(--muted)]">Messages and responses through your personal QR only. Click one to read it in full.</p>
               <InboxControls filter={filter} source={campaigns.some((c) => c.id === source) ? source : ''} counts={{ all: counts.open, unread: counts.unread, archived: counts.archived, blocked: counts.blocked }} sources={campaigns.map((c) => ({ id: c.id, label: `${c.name} · ${modeName(c.mode)}` }))} />
               <PendingRegion className="soft-card overflow-hidden">
-                {items.length === 0 ? <EmptyInbox filter={filter} /> : <ul className="divide-y divide-[var(--line)]">{items.map((item) => <ResponseRow key={item.id} item={item} />)}</ul>}
+                {items.length === 0 ? <EmptyInbox filter={filter} /> : <InboxList items={items} />}
               </PendingRegion>
               {since && <p className="text-xs text-[var(--muted)]">The free plan shows responses from the last 30 days.</p>}
             </div>
