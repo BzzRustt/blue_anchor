@@ -24,7 +24,7 @@ const sameTag = (typed: string, tag: string) => {
  * searches names and card answers (keywords); otherwise only a badge tag can be searched, by design,
  * so nobody can browse an event whose organiser chose "badge search only". Rules live in SQL.
  */
-export default async function PeoplePage({ params, searchParams }: { params: Promise<{ slug: string }>; searchParams: Promise<{ q?: string; tag?: string }> }) {
+export default async function PeoplePage({ params, searchParams }: { params: Promise<{ slug: string }>; searchParams: Promise<{ q?: string; tag?: string; role?: string }> }) {
   const { slug } = await params
   const sp = await searchParams
   const q = (sp.q ?? sp.tag ?? '').trim().slice(0, 60)
@@ -49,7 +49,21 @@ export default async function PeoplePage({ params, searchParams }: { params: Pro
   const everyone = open && directoryMode && !q
     ? await withAttendeeDb(me.id, async (tx) => rowsOf<FoundPerson>(await tx.execute(sql`select * from attendee_directory(''::text)`))).catch(() => [])
     : []
-  const from = `/e/${slug}/people${q ? `?q=${encodeURIComponent(q)}` : ''}`
+  // Role chips filter what is already loaded; only roles that someone in the list actually has are offered.
+  const roles = ctx.roles.filter((r) => [...found, ...everyone].some((p) => p.role_letter === r.letter))
+  const role = roles.some((r) => r.letter === sp.role) ? sp.role : undefined
+  const byRole = <T extends { role_letter: string | null }>(list: T[]) => (role ? list.filter((p) => p.role_letter === role) : list)
+  const chipHref = (letter?: string) => { const p = new URLSearchParams(); if (q) p.set('q', q); if (letter) p.set('role', letter); const s = p.toString(); return `/e/${slug}/people${s ? `?${s}` : ''}` }
+  const from = chipHref(role)
+  const shownFound = byRole(found)
+  const shownEveryone = byRole(everyone)
+  const chips = roles.length > 1 && (found.length > 0 || everyone.length > 0) && (
+    <nav aria-label="Filter by role" className="flex flex-wrap gap-2">
+      {[{ letter: undefined, label: 'All' }, ...roles].map((r) => (
+        <Link key={r.letter ?? 'all'} href={chipHref(r.letter)} aria-current={r.letter === role ? 'true' : undefined} className={`rounded-full border px-3 py-1.5 text-sm font-bold ${r.letter === role ? 'border-[var(--accent)] bg-[var(--accent)] text-[var(--on-accent)]' : 'border-[var(--line)] text-[var(--muted)]'}`}>{r.label}</Link>
+      ))}
+    </nav>
+  )
 
   return (
     <EventShell eyebrow={ctx.name} title="Find people">
@@ -69,15 +83,17 @@ export default async function PeoplePage({ params, searchParams }: { params: Pro
           {itsMe && <div role="status" className="rounded-xl border border-[var(--accent)] bg-[var(--accent-soft)] p-4 text-sm"><p className="font-extrabold">That’s you: {me.tag}</p><p className="mt-1 text-[var(--muted)]">This is the tag on your own badge.</p><Link href={`/e/${slug}/a/${me.id}`} className="mt-3 inline-block font-bold text-[var(--accent)] underline">See how your card looks to others</Link></div>}
           {q && !itsMe && !error && (
             <section className="grid gap-3">
-              <h2 className="font-extrabold">Results for “{q}” ({found.length})</h2>
-              <PeopleList slug={slug} from={from} people={found} questions={ctx.questions}
+              <h2 className="font-extrabold">Results for “{q}” ({shownFound.length})</h2>
+              {chips}
+              <PeopleList slug={slug} from={from} people={shownFound} questions={ctx.questions}
                 empty={looksLikeTag(q) ? 'Nobody with that tag is sharing a card. They may not have set up their card yet, or chose to keep it hidden.' : 'Nobody matches that. Try another word, or search by the tag on their badge.'} />
             </section>
           )}
           {directoryMode && !q && (
             <section className="grid gap-3">
-              <h2 className="font-extrabold">Everyone sharing a card ({everyone.length})</h2>
-              <PeopleList slug={slug} from={from} people={everyone} empty="Nobody else is sharing a card yet." questions={ctx.questions} />
+              <h2 className="font-extrabold">Everyone sharing a card ({shownEveryone.length})</h2>
+              {chips}
+              <PeopleList slug={slug} from={from} people={shownEveryone} empty="Nobody else is sharing a card yet." questions={ctx.questions} />
             </section>
           )}
         </div>
