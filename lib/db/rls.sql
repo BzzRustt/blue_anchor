@@ -60,7 +60,7 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON users, session, account, verification TO
 
 GRANT SELECT ON codes, campaigns, question_blocks TO visitor_user;
 GRANT SELECT (id, name, image, bio, role, company, instagram, linkedin, website,
-  tiktok, youtube, spotify, portfolio_url, interests, looking_for, can_offer)
+  tiktok, youtube, spotify, portfolio_url, interests, looking_for, can_offer, plan)
   ON users TO visitor_user;
 GRANT SELECT (id, user_id, device_hash, session_token, created_at) ON blocked_devices TO visitor_user;
 GRANT SELECT (id, code_id, session_token, submitted_at) ON responses TO visitor_user;
@@ -1639,3 +1639,17 @@ AS $$
 $$;
 REVOKE ALL ON FUNCTION public.code_for_handle(text) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION public.code_for_handle(text) TO visitor_user;
+
+-- Event cover photos: the organiser manages their own event's cover; visitors can load one only
+-- while the event is published (the same rule as the event page itself).
+ALTER TABLE event_covers ENABLE ROW LEVEL SECURITY;
+ALTER TABLE event_covers FORCE ROW LEVEL SECURITY;
+GRANT SELECT, INSERT, UPDATE, DELETE ON event_covers TO app_user;
+GRANT SELECT (event_id, mime, bytes, updated_at) ON event_covers TO visitor_user;
+DROP POLICY IF EXISTS event_covers_owner ON event_covers;
+CREATE POLICY event_covers_owner ON event_covers TO app_user
+  USING (EXISTS (SELECT 1 FROM events e WHERE e.id = event_covers.event_id AND e.user_id = auth.user_id()))
+  WITH CHECK (EXISTS (SELECT 1 FROM events e WHERE e.id = event_covers.event_id AND e.user_id = auth.user_id()));
+DROP POLICY IF EXISTS event_covers_public ON event_covers;
+CREATE POLICY event_covers_public ON event_covers FOR SELECT TO visitor_user
+  USING (EXISTS (SELECT 1 FROM events e WHERE e.id = event_covers.event_id AND e.status = 'published'));

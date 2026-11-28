@@ -5,11 +5,13 @@ import { BusyForms } from '@/components/BusyForms'
 import { ThemeToggle } from '@/components/ThemeToggle'
 
 /** The public attendee frame. Mirrors the visitor page at /t/[code] so both feel like one product. */
-export function EventShell({ eyebrow, title, subtitle, children }: { eyebrow?: string; title: string; subtitle?: string; children?: ReactNode }) {
+export function EventShell({ eyebrow, title, subtitle, cover, children }: { eyebrow?: string; title: string; subtitle?: string; /** Address of the event cover photo, when the organiser added one. */ cover?: string; children?: ReactNode }) {
   return (
     <main className="min-h-dvh bg-[var(--accent-soft)] px-4 py-6 sm:grid sm:place-items-center sm:py-10">
       <article className="mx-auto w-full max-w-[520px] overflow-hidden rounded-[28px] border border-[var(--line)] bg-[var(--surface-strong)] shadow-[var(--shadow)]">
         <div className="h-2 bg-[var(--accent)]" />
+        {/* eslint-disable-next-line @next/next/no-img-element -- already re-encoded and sized by the server */}
+        {cover && <img src={cover} alt="" width={1280} height={640} className="aspect-[2/1] w-full object-cover" />}
         <div className="p-5 sm:p-8">
           <div className="flex items-start justify-between gap-4">
             <span className="text-xs font-extrabold uppercase tracking-[.14em] text-[var(--accent-strong)]">{eyebrow ?? 'Event'}</span>

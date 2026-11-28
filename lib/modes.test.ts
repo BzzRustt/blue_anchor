@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { ALLOWED_SHOW, buildBlocks, countShownLinks, defaultConfig, isLinkField, MODE_INFO, MODE_KEYS, parseModeConfig, safeHttpUrl, visitorLinks, type OwnerProfile } from './modes.ts'
-import { canAddSocialLink } from './plans.ts'
+import { ALLOWED_SHOW, buildBlocks, countShownLinks, defaultConfig, isLinkField, MODE_INFO, FREE_SOCIAL_LINKS, MODE_KEYS, parseModeConfig, safeHttpUrl, visitorLinks, type OwnerProfile } from './modes.ts'
+import { canAddSocialLink, planLimits } from './plans.ts'
 
 const owner: OwnerProfile = {
   name: 'Amara Cole', image: 'https://x.test/a.png', bio: 'Designer', role: 'Designer', company: 'Fieldwork',
@@ -114,4 +114,21 @@ test('Free may show one link, Pro as many as the Mode offers', () => {
   assert.equal(canAddSocialLink('free', countShownLinks(show) - 1).ok, false)
   assert.equal(canAddSocialLink('free', countShownLinks({ instagram: true }) - 1).ok, true)
   assert.equal(canAddSocialLink('pro', countShownLinks(show) - 1).ok, true)
+})
+
+test('visitor pages show one social link for Free owners, all for Pro, and the cap matches the plan table', () => {
+  assert.equal(FREE_SOCIAL_LINKS, planLimits('free').socialLinks)
+  const cfg = parseModeConfig('basic', { show: { instagram: true, linkedin: true, tiktok: true, website: true } })
+  const free = visitorLinks('basic', cfg, { ...owner, plan: 'free' })
+  assert.deepEqual(free.map((l) => l.key), ['instagram'])
+  const pro = visitorLinks('basic', cfg, { ...owner, plan: 'pro' })
+  assert.deepEqual(pro.map((l) => l.key), ['instagram', 'tiktok', 'linkedin', 'website'])
+  // No plan given (older callers): unchanged behaviour.
+  assert.equal(visitorLinks('basic', cfg, owner).length, 4)
+})
+
+test('the Free cap counts social links only, not Creator featured links', () => {
+  const cfg = parseModeConfig('creator', { show: { instagram: true, tiktok: true }, creator: { featured: { title: 'EP', url: 'https://x.test/ep', button: 'Listen' }, links: [{ label: 'Shop', url: 'https://x.test/shop' }] } })
+  const links = visitorLinks('creator', cfg, { ...owner, plan: 'free' })
+  assert.deepEqual(links.map((l) => l.key), ['instagram', 'featured', 'link1'])
 })

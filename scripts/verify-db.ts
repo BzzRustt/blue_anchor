@@ -57,7 +57,7 @@ const tables = await admin`
   ORDER BY c.relname
 `
 
-check('32 application tables exist', tables.length === 32, `found ${tables.length}`)
+check('33 application tables exist', tables.length === 33, `found ${tables.length}`)
 check(
   'RLS is enabled and forced on every application table',
   tables.every((table) => table.relrowsecurity && table.relforcerowsecurity),
@@ -644,6 +644,15 @@ check('another owner cannot read or replace my photo', ((await asB(app`SELECT us
 await admin`UPDATE codes SET is_live = false WHERE id = ${codeA2.id}`
 check('the photo is unavailable while sharing is paused', (await visitor`SELECT user_id FROM user_photos WHERE user_id = ${USER_A}`).length === 0)
 await admin`UPDATE codes SET is_live = true WHERE id = ${codeA2.id}`
+// 0009: event covers, and the plan column that lets a visitor page apply the Free link limit.
+await admin`INSERT INTO event_covers (event_id, bytes) VALUES (${eventA.eventId}, decode('00', 'hex'))`
+check('a visitor can load the cover of a published event', (await visitor`SELECT event_id FROM event_covers WHERE event_id = ${eventA.eventId}`).length === 1)
+check('another organiser cannot read or replace my event cover', ((await asB(app`SELECT event_id FROM event_covers WHERE event_id = ${eventA.eventId}`))[1] as unknown[]).length === 0 && await isRejected(() => asB(app`INSERT INTO event_covers (event_id, bytes) VALUES (${eventA.eventId}, decode('01', 'hex')) ON CONFLICT (event_id) DO UPDATE SET bytes = excluded.bytes`)))
+const statusA = (await admin`SELECT status FROM events WHERE id = ${eventA.eventId}`)[0].status as string
+await admin`UPDATE events SET status = 'draft' WHERE id = ${eventA.eventId}`
+check('a cover is unavailable to visitors while the event is not published', (await visitor`SELECT event_id FROM event_covers WHERE event_id = ${eventA.eventId}`).length === 0)
+await admin`UPDATE events SET status = ${statusA} WHERE id = ${eventA.eventId}`
+check('a visitor can read the plan of an owner whose code is live, and nothing sensitive beside it', (await visitor`SELECT plan FROM users WHERE id = ${USER_A}`).length === 1 && await isRejected(() => visitor`SELECT email FROM users WHERE id = ${USER_A}`))
 // 0007: personal blocks by browser token are readable to the respond check.
 await admin`INSERT INTO blocked_devices (user_id, session_token) VALUES (${USER_A}, 'verify-blocked-token')`
 check('the respond check can see a browser block', (await visitor`SELECT id FROM blocked_devices WHERE user_id = ${USER_A} AND session_token = 'verify-blocked-token'`).length === 1)

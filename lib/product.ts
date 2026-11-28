@@ -99,6 +99,7 @@ export async function getVisitorExperience(slug: string): Promise<VisitorExperie
         interests: schema.users.interests,
         lookingFor: schema.users.lookingFor,
         canOffer: schema.users.canOffer,
+        plan: schema.users.plan,
       },
     })
     .from(schema.codes)

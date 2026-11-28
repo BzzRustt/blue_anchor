@@ -12,7 +12,7 @@ import { BadgePlate } from '@/components/BadgePlate'
 import { EventClosed, EventShell } from '@/components/EventShell'
 import { asVisibility } from '@/lib/attendee-access'
 import { auth } from '@/lib/auth-server'
-import { schema, withAttendeeDb, withOwnerDb } from '@/lib/db'
+import { schema, visitorDb, withAttendeeDb, withOwnerDb } from '@/lib/db'
 import { getJoinContext, loadMyCard, verifiedAttendeeId } from '@/lib/event-join'
 import { formatWhen } from '@/lib/events'
 import { rowsOf, unreadCount } from '@/lib/networking'
@@ -28,6 +28,9 @@ export default async function EventPage({ params, searchParams }: { params: Prom
   const ctx = await getJoinContext(slug)
   if (!ctx) return <EventClosed />
 
+  // A cover photo exists only if the organiser added one; the version in the address refreshes it after a change.
+  const coverRow = await visitorDb.execute(sql`select extract(epoch from updated_at)::bigint as v from event_covers where event_id = ${ctx.eventId}::uuid`).then((r) => (Array.isArray(r) ? r : (r as unknown as { rows: Array<{ v: string }> }).rows)[0] as { v: string } | undefined).catch(() => undefined)
+  const cover = coverRow ? `/api/event-cover/${ctx.eventId}?v=${coverRow.v}` : undefined
   const attendeeId = await verifiedAttendeeId(ctx.eventId)
   const card = attendeeId ? await loadMyCard(attendeeId, ctx.eventId) : null
   const live = card && card.status !== 'withdrawn'
@@ -47,7 +50,7 @@ export default async function EventPage({ params, searchParams }: { params: Prom
     : false
 
   return (
-    <EventShell eyebrow="Event" title={ctx.name} subtitle={[formatWhen(ctx.startsAt), ctx.venue].filter(Boolean).join(' · ')}>
+    <EventShell eyebrow="Event" cover={cover} title={ctx.name} subtitle={[formatWhen(ctx.startsAt), ctx.venue].filter(Boolean).join(' · ')}>
       {live && <AttendeeNav slug={slug} active="event" unread={unread} />}
       <div className="grid gap-4">
         <NetworkNotice ok={query.ok} e={query.e} />

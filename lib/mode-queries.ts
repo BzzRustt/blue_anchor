@@ -22,7 +22,7 @@ export async function getModeState(userId: string, mode: ModeKey) {
     select me.plan,
       json_build_object('name', me.name, 'image', me.image, 'bio', me.bio, 'role', me.role, 'company', me.company,
         'instagram', me.instagram, 'linkedin', me.linkedin, 'tiktok', me.tiktok, 'youtube', me.youtube, 'spotify', me.spotify,
-        'website', me.website, 'portfolioUrl', me.portfolio_url, 'interests', me.interests, 'lookingFor', me.looking_for, 'canOffer', me.can_offer) as owner,
+        'website', me.website, 'portfolioUrl', me.portfolio_url, 'interests', me.interests, 'lookingFor', me.looking_for, 'canOffer', me.can_offer, 'plan', me.plan) as owner,
       (select json_build_object('id', c.id, 'status', c.status, 'config', c.config) from c) as campaign,
       (select coalesce(json_agg(json_build_object('id', qb.id, 'campaignId', qb.campaign_id, 'position', qb.position, 'required', qb.required, 'type', qb.type, 'config', qb.config) order by qb.position), '[]'::json)
          from question_blocks qb where qb.campaign_id = (select id from c)) as blocks,

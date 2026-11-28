@@ -3,6 +3,7 @@
 import { and, eq, sql } from 'drizzle-orm'
 import { revalidatePath } from 'next/cache'
 import { redirect } from 'next/navigation'
+import sharp from 'sharp'
 import { z } from 'zod'
 import { schema, withOwnerDb } from '@/lib/db'
 import {
@@ -20,6 +21,7 @@ import { newAccessToken } from '@/lib/attendee-access'
 import { appBaseUrl } from '@/lib/event-queries'
 import { findPackage } from '@/lib/event-packages'
 import { requireOwner } from '@/lib/owner'
+import { imageKind, PHOTO_MAX_BYTES } from '@/lib/profile-rules'
 import { createCheckoutSession, stripeConfigured } from '@/lib/stripe'
 import {
   canAddAttendee,
@@ -525,4 +527,51 @@ export async function issueAccessLink(formData: FormData) {
   if (!issued) return fail(here, 'not_found')
   const link = `${appBaseUrl()}/e/${encodeURIComponent(issued.slug)}/access?t=${token}`
   redirect(`${here}&link=${encodeURIComponent(link)}&for=${encodeURIComponent(issued.name.slice(0, 80))}`)
+}
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+/** Saves a cover photo for the organiser's own event: checked, cropped to 2:1 and re-encoded as WebP. */
+export async function uploadEventCover(formData: FormData) {
+  const session = await requireOwner()
+  const eventId = String(formData.get('eventId') ?? '')
+  if (!UUID.test(eventId)) redirect('/app/events')
+  const here = `/app/events/${eventId}?tab=settings`
+  const file = formData.get('photo')
+  if (!(file instanceof File) || file.size === 0) fail(here, 'cover')
+  if (file.size > PHOTO_MAX_BYTES) fail(here, 'cover_size')
+  const bytes = new Uint8Array(await file.arrayBuffer())
+  if (!imageKind(bytes)) fail(here, 'cover_type')
+  let webp: Buffer
+  try {
+    webp = await sharp(bytes, { limitInputPixels: 40_000_000 }).rotate().resize(1280, 640, { fit: 'cover' }).webp({ quality: 80 }).toBuffer()
+  } catch {
+    fail(here, 'cover_type')
+  }
+  const saved = await withOwnerDb(session.user.id, async (db) => {
+    // The policy only lets this run for an event the organiser owns; the select makes "not yours" a clean answer.
+    const [event] = await db.select({ id: schema.events.id }).from(schema.events).where(and(eq(schema.events.id, eventId), eq(schema.events.userId, session.user.id))).limit(1)
+    if (!event) return false
+    await db.execute(sql`insert into event_covers (event_id, mime, bytes, updated_at) values (${eventId}::uuid, 'image/webp', decode(${webp.toString('base64')}, 'base64'), now())
+      on conflict (event_id) do update set bytes = excluded.bytes, mime = excluded.mime, updated_at = now()`)
+    await db.update(schema.events).set({ coverUrl: `/api/event-cover/${eventId}?v=${Date.now()}` }).where(eq(schema.events.id, eventId))
+    return true
+  })
+  if (!saved) fail('/app/events', 'not_found')
+  revalidatePath('/app/events')
+  revalidatePath(`/app/events/${eventId}`)
+  redirect(`${here}&cover=saved`)
+}
+
+export async function removeEventCover(formData: FormData) {
+  const session = await requireOwner()
+  const eventId = String(formData.get('eventId') ?? '')
+  if (!UUID.test(eventId)) redirect('/app/events')
+  await withOwnerDb(session.user.id, async (db) => {
+    await db.execute(sql`delete from event_covers where event_id = ${eventId}::uuid`)
+    await db.update(schema.events).set({ coverUrl: null }).where(and(eq(schema.events.id, eventId), eq(schema.events.userId, session.user.id)))
+  })
+  revalidatePath('/app/events')
+  revalidatePath(`/app/events/${eventId}`)
+  redirect(`/app/events/${eventId}?tab=settings&cover=removed`)
 }

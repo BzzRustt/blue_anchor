@@ -2,11 +2,12 @@ import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import { asc, eq } from 'drizzle-orm'
 import { ArrowLeft, ArrowSquareOut, DownloadSimple, Printer } from '@phosphor-icons/react/dist/ssr'
-import { addGroup, addPerson, addSpareTags, cancelEvent, importRoster, issueAccessLink, removeAttendee, startPublish, toggleCheckIn, updateEventQuestions, updateEventSettings } from '@/app/app/events/actions'
+import { addGroup, addPerson, addSpareTags, cancelEvent, importRoster, issueAccessLink, removeAttendee, startPublish, toggleCheckIn, updateEventQuestions, updateEventSettings, uploadEventCover, removeEventCover } from '@/app/app/events/actions'
 import { ConfirmForm } from '@/components/ConfirmForm'
 import { DirtyForm, SaveButton } from '@/components/DirtyForm'
 import { TypedConfirmForm } from '@/components/TypedConfirmForm'
 import { CopyLinkButton } from '@/components/workspace/CopyLinkButton'
+import { PhotoUpload } from '@/components/workspace/PhotoUpload'
 import { schema, withOwnerDb } from '@/lib/db'
 import { appBaseUrl, getOwnedEvent } from '@/lib/event-queries'
 import { EVENT_PACKAGES, formatPence } from '@/lib/event-packages'
@@ -16,6 +17,9 @@ import { planLimits, type Plan } from '@/lib/plans'
 import { requireOwner } from '@/lib/owner'
 
 const errors: Record<string, string> = {
+  cover: 'Choose a photo to upload.',
+  cover_size: 'That photo is too large. Use one under 5 MB.',
+  cover_type: 'That file is not a photo we can use. Upload a JPEG, PNG or WebP image.',
   empty: 'There was nothing to add.',
   invalid: 'Something in the form was missing or too long.',
   not_found: 'That event could not be found.',
@@ -27,7 +31,7 @@ const errors: Record<string, string> = {
 
 const TABS = [['overview', 'Overview'], ['attendees', 'Attendees'], ['badges', 'Badges'], ['settings', 'Settings']] as const
 type Tab = (typeof TABS)[number][0]
-type Search = { tab?: string; q?: string; error?: string; detail?: string; added?: string; skipped?: string; paid?: string; link?: string; for?: string }
+type Search = { cover?: string; tab?: string; q?: string; error?: string; detail?: string; added?: string; skipped?: string; paid?: string; link?: string; for?: string }
 
 /** People who registered themselves in the last hour, so a sudden spike of sign-ups stands out. */
 function selfJoinedLastHour(people: Array<{ source: string; createdAt: Date }>) {
@@ -72,6 +76,8 @@ export default async function EventPage({ params, searchParams }: { params: Prom
   return (
     <div className="grid gap-6">
       <Link href="/app/events" className="action-quiet w-fit !px-0"><ArrowLeft size={18} />Events</Link>
+      {/* eslint-disable-next-line @next/next/no-img-element -- already re-encoded and sized by the server */}
+      {event.coverUrl && <img src={event.coverUrl} alt="" width={1280} height={640} className="aspect-[3/1] w-full rounded-[var(--radius)] object-cover" />}
       <header className="flex flex-wrap items-end justify-between gap-4">
         <div className="min-w-0">
           <p className="overline">{formatWhen(event.startsAt)}{event.venue ? ` · ${event.venue}` : ''}</p>
@@ -275,6 +281,11 @@ export default async function EventPage({ params, searchParams }: { params: Prom
     const rows = [...questions, ...Array.from({ length: Math.max(0, 6 - questions.length) }, () => null)].slice(0, 6)
     return (
       <div className="grid gap-5">
+        <section className="soft-card grid gap-3 p-5 sm:p-7" aria-labelledby="cover-title">
+          <h2 id="cover-title" className={h2}>Cover photo</h2>
+          <p className="text-sm leading-6 text-[var(--muted)]">Shown at the top of your event page and on your Events list. JPEG, PNG or WebP, up to 5 MB; we crop it to a wide banner.{query.cover === 'saved' && <strong className="text-[var(--accent-strong)]"> Cover saved.</strong>}{query.cover === 'removed' && <strong className="text-[var(--accent-strong)]"> Cover removed.</strong>}</p>
+          <div className="flex flex-wrap items-center gap-3"><PhotoUpload action={uploadEventCover} hidden={{ eventId: event.id }} />{event.coverUrl && <form action={removeEventCover}><input type="hidden" name="eventId" value={event.id} /><button className="action-quiet">Remove cover</button></form>}</div>
+        </section>
         <DirtyForm action={updateEventSettings} className="soft-card grid gap-4 p-5 sm:grid-cols-2 sm:p-7">
           <input type="hidden" name="eventId" value={event.id} />{tabInput}
           <h2 className={`${h2} sm:col-span-2`}>Details and networking</h2>

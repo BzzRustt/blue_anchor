@@ -8,11 +8,12 @@ import { PHOTO_MAX_BYTES } from '@/lib/profile-rules'
  * accepts a few MB per form, so a huge file used to end in a generic "page couldn't load" error.
  * The server still checks the size and the real file type.
  */
-export function PhotoUpload({ action }: { action: (formData: FormData) => void | Promise<void> }) {
+export function PhotoUpload({ action, hidden = {} }: { action: (formData: FormData) => void | Promise<void>; hidden?: Record<string, string> }) {
   const [problem, setProblem] = useState('')
   const [busy, setBusy] = useState(false)
   return (
     <form action={action} onSubmit={() => setBusy(true)} className="grid grid-cols-[minmax(0,1fr)] gap-2">
+      {Object.entries(hidden).map(([name, value]) => <input key={name} type="hidden" name={name} value={value} />)}
       <div className="flex flex-wrap items-center gap-2">
         <label className="sr-only" htmlFor="photo">Choose a photo</label>
         <input

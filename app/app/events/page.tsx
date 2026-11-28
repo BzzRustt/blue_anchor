@@ -30,6 +30,7 @@ export default async function EventsPage() {
         startsAt: schema.events.startsAt,
         status: schema.events.status,
         capacity: schema.events.capacity,
+        coverUrl: schema.events.coverUrl,
         endsAt: schema.events.endsAt,
         directoryExpiresAt: schema.events.directoryExpiresAt,
         // `events.id` literally, not ${schema.events.id}: see the note in app/app/modes/page.tsx.
@@ -62,7 +63,10 @@ export default async function EventsPage() {
             const day = event.startsAt.toLocaleString('en-GB', { day: 'numeric', timeZone: 'Europe/London' })
             const month = event.startsAt.toLocaleString('en-GB', { month: 'short', timeZone: 'Europe/London' }).toUpperCase()
             return (
-              <Link key={event.id} href={`/app/events/${event.id}`} className="soft-card flex min-h-48 flex-col p-5 transition hover:border-[var(--accent)]">
+              <Link key={event.id} href={`/app/events/${event.id}`} className="soft-card flex min-h-48 flex-col overflow-hidden !p-0 transition hover:border-[var(--accent)]">
+                {/* eslint-disable-next-line @next/next/no-img-element -- already re-encoded and sized by the server */}
+                {event.coverUrl && <img src={event.coverUrl} alt="" width={1280} height={640} className="aspect-[2/1] w-full object-cover" />}
+                <div className="flex flex-1 flex-col p-5">
                 <div className="flex items-start justify-between gap-3">
                   <span aria-hidden="true" className="grid h-14 w-14 shrink-0 place-items-center rounded-xl bg-[var(--accent-soft)] text-center leading-none text-[var(--accent-strong)]"><span><span className="block text-[10px] font-extrabold tracking-[.1em]">{month}</span><span className="block text-xl font-extrabold">{day}</span></span></span>
                   {phase ? <span className="status-live">{phase}</span> : <span className="status-draft">{event.status === 'cancelled' ? 'Cancelled' : 'Draft'}</span>}
@@ -71,6 +75,7 @@ export default async function EventsPage() {
                 <p className="mt-1 text-sm text-[var(--muted)]">{formatWhen(event.startsAt)}{event.venue ? ` · ${event.venue}` : ''}</p>
                 {event.capacity ? <div className="mt-4"><p className="mb-1 flex justify-between text-xs text-[var(--muted)]"><span>{event.attendees} / {event.capacity} guests</span><span>{pct}%</span></p><div role="progressbar" aria-valuenow={pct} aria-valuemin={0} aria-valuemax={100} aria-label="Places used" className="h-2 overflow-hidden rounded-full bg-[var(--surface-muted)]"><div className="h-full rounded-full bg-[var(--accent)]" style={{ width: `${pct}%` }} /></div></div> : <p className="mt-4 text-xs text-[var(--muted)]">{event.attendees} {event.attendees === 1 ? 'tag' : 'tags'} issued</p>}
                 <p className="mt-auto pt-5 text-xs font-bold text-[var(--accent-strong)]">{cta} →</p>
+                </div>
               </Link>
             )
           })}</div>}

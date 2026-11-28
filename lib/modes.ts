@@ -194,7 +194,12 @@ export type OwnerProfile = {
   name: string; image: string | null; bio: string | null; role: string | null; company: string | null
   instagram: string | null; linkedin: string | null; tiktok: string | null; youtube: string | null; spotify: string | null
   website: string | null; portfolioUrl: string | null; interests: string | null; lookingFor: string | null; canOffer: string | null
+  /** The owner's plan. Free accounts show one social link on a visitor page; anything else shows all. */
+  plan?: string | null
 }
+
+/** Same number as planLimits('free').socialLinks (a test keeps them equal; this file stays free of imports). */
+export const FREE_SOCIAL_LINKS = 1
 
 const handle = (value: string | null) => { const v = (value ?? '').trim().replace(/^@/, '').replace(/^https?:\/\/(www\.)?(instagram|tiktok)\.com\/@?/i, '').replace(/\/$/, ''); return /^[A-Za-z0-9._]{1,30}$/.test(v) ? v : '' }
 
@@ -214,6 +219,11 @@ export function visitorLinks(mode: ModeKey, cfg: ModeConfig, owner: OwnerProfile
   const tt = handle(owner.tiktok); if (on('tiktok') && tt) links.push({ key: 'tiktok', label: 'TikTok', url: `https://tiktok.com/@${tt}`, kind: 'social' })
   for (const [field, label, value] of [['linkedin', 'LinkedIn', owner.linkedin], ['youtube', 'YouTube', owner.youtube], ['spotify', 'Spotify', owner.spotify], ['website', 'Website', owner.website], ['portfolio', 'Portfolio', owner.portfolioUrl]] as const) {
     const url = safeHttpUrl(value); if (on(field) && url) links.push({ key: field, label, url, kind: 'social' })
+  }
+  // Free plan: only the first social link is shown, however many are saved (a downgrade or an old setting can leave more).
+  if (owner.plan === 'free') {
+    let seen = 0
+    for (let i = 0; i < links.length; i++) if (links[i].kind === 'social' && ++seen > FREE_SOCIAL_LINKS) links.splice(i--, 1)
   }
   if (mode === 'creator') {
     if (cfg.creator.featured.url) links.push({ key: 'featured', label: cfg.creator.featured.button, url: cfg.creator.featured.url, kind: 'featured' })
